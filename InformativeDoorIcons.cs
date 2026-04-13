@@ -15,19 +15,19 @@ using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
 using Unity.Collections;
 using System.Linq;
+using BepInEx.Logging;
 
 namespace InformativeDoorIcons
 {
-    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.1.0")]
+    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.2.0")]
     [BepInDependency("dev.gtfomodding.gtfo-api")]
     public class InformativeDoorIconsPlugin : BasePlugin
     {
         public static InformativeDoorIconsPlugin Instance { get; private set; }
 
         // Toggles
-        public static ConfigEntry<bool> ChangeApexToAlarm;
-        public static ConfigEntry<bool> StyleFreeSecurityDoors;
-        public static ConfigEntry<bool> FixDoorNamePositions;
+        public static ConfigEntry<bool> ExtraDoorStateInformation;
+       public static ConfigEntry<bool> StyleFreeSecurityDoors;
         public static ConfigEntry<bool> SecurityDoorKeycardMatchColor;
         public static ConfigEntry<bool> ChangeWeakDoorColors;
 
@@ -46,13 +46,12 @@ namespace InformativeDoorIcons
             Instance = this;
 
             // General Toggles
-            ChangeApexToAlarm             = Config.Bind("Settings", "Change Apex label to Alarm", true, "Because Apex doors are always alarmed, this change makes that more obvious at a glance.");
-            FixDoorNamePositions          = Config.Bind("Settings", "ImproveDoorNamePositions", true, "Bump the pixle hight on doors a bit so their titles aren't inside the door sprite.");
+            ExtraDoorStateInformation     = Config.Bind("Settings", "- Extra door information (Not Retroactive)", true, "For Security Doors, the bottom label is rewritten to display lockdowns, needed power, blood doors, and finally what zone it leads to.");
 
             // Color stuff
             StyleFreeSecurityDoors        = Config.Bind("Settings", "Change the color for non-alarm Security Doors", true, "Add green coloration to non-alarmed \"free\" Security Door map icons.");
-            SecurityDoorKeycardMatchColor = Config.Bind("Settings", "- Security Doors Match Keycard Color", true, "If a door is locked via Keycard, the interior sprite of the door will now match the Keycard color until unlocked.");
-            ChangeWeakDoorColors          = Config.Bind("Settings", "- Change Locked Weak Door Colors", true, "If a Weak Door (a breackable doors) is locked, their sprite color reflects that.");
+            SecurityDoorKeycardMatchColor = Config.Bind("Settings", "Security Doors match Keycard color", true, "If a door is locked via Keycard, the interior sprite of the door will now match the Keycard color until unlocked.");
+            ChangeWeakDoorColors          = Config.Bind("Settings", "Change locked Weak Door colors", true, "If a Weak Door (a breackable doors) is locked, their sprite color reflects that.");
 
             MeleeClosedColorHex           = Config.Bind("Settings", "MeleeClosedColor", "#FFFF00", "Color of a melee-locked Weak Door icon when closed. #rrggbb");
             MeleeClosedAlpha              = Config.Bind("Settings", "MeleeClosedAlpha", 0.8f,
@@ -140,6 +139,23 @@ namespace InformativeDoorIcons
                 DoorManager.RefreshConfig();
                 DoorManager.ApplyConfigToAllDoors();
             }
+
+            /*
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                foreach (DoorManager.WeakDoorEntry item in DoorManager.s_weakDoor.Values)
+                {
+                    Debug.LogWarning($"{item.PhysicalDoor.m_terminalItem.TerminalItemKey}");
+                    foreach (SpriteRenderer sprite in item.GuiItem.GetComponentsInChildren<SpriteRenderer>())
+                    {
+                        Debug.LogWarning($"before: {sprite.gameObject.name}, {sprite.color}");
+                        sprite.color = Color.magenta;
+                        Debug.LogWarning($"after: {sprite.gameObject.name}, {sprite.color}");
+                    }
+                    Debug.LogWarning("--------");
+                }
+            }
+            */
         }
     }
 
@@ -161,14 +177,12 @@ namespace InformativeDoorIcons
             public LG_WeakDoor      PhysicalDoor;
             public bool             IsMeleeLocked;
             public bool             IsHack;
-            public Vector3          OriginalLocatorPos; // Captured BEFORE the Setup patch moves the text for the first time, so the FixDoorNamePositions revert path has the true original position.
         }
 
         internal struct SecurityDoorEntry
         {
             public CM_SyncedGUIItem  GuiItem;
             public LG_SecurityDoor   PhysicalDoor;
-            public Vector3           OriginalLocatorPos;      // Captured BEFORE the Setup patch moves the text.
             public float             OriginalApexCharSpacing; // Captured BEFORE the Setup patch calls ForceMeshUpdate() on the APEX TextMeshPro so the ChangeApexToAlarm revert path is correct.
             public List<GameObject>  BlackKeyOutlineClones;   // KEY_BLACK outline duplicates; toggled active/inactive with CfgSecurityDoorKeycardMatchColor.
         }
@@ -177,7 +191,7 @@ namespace InformativeDoorIcons
         internal static readonly Dictionary<int, WeakDoorEntry>     s_weakDoor     = new();
         internal static readonly Dictionary<int, SecurityDoorEntry> s_securityDoor = new();
 
-        // Registers a Weak Door. Must be called BEFORE ApplyConfigToWeakDoor so that OriginalLocatorPos is captured from the unmodified transform.
+        // Registers a Weak Door.
         public static void RegisterWeakDoor(
             int              physicalDoorInstanceId,
             CM_SyncedGUIItem guiItem,
@@ -185,20 +199,34 @@ namespace InformativeDoorIcons
             bool             isMeleeLocked,
             bool             isHack)
         {
+            // This single check prevents pouncer dimensions from making weak doors a living nightmare
+            // see this comment on the GTFO modding discord for more details: https://discord.com/channels/782438773690597389/831651015388037171/1493115439704707082
+            if (s_weakDoor.ContainsKey(physicalDoorInstanceId))
+            {
+                // Debug.LogWarning($"[InformativeDoorIcons] RegisterWeakDoor: duplicate registration for ID {physicalDoorInstanceId}, skipping.");
+                return;
+            }
+
             s_weakDoor[physicalDoorInstanceId] = new WeakDoorEntry
             {
                 GuiItem            = guiItem,
                 PhysicalDoor       = physicalDoor,
                 IsMeleeLocked      = isMeleeLocked,
                 IsHack             = isHack,
-                OriginalLocatorPos = guiItem.m_locatorTxt.gameObject.transform.localPosition,
             };
         }
 
         // Must be called BEFORE ApplyConfigToSecurityDoor.
-        // Registers a Security Door. Captures OriginalLocatorPos and OriginalApexCharSpacing from the live objects BEFORE they're adjusted.
+        // Registers a Security Door. Captures OriginalApexCharSpacing from the live objects BEFORE it was adjusted.
         public static void RegisterSecurityDoor(int physicalDoorInstanceId, CM_SyncedGUIItem guiItem, LG_SecurityDoor  physicalDoor)
         {
+            // this is here for the same reason as the weak door fix, see the function above for more info
+            if (s_securityDoor.ContainsKey(physicalDoorInstanceId))
+            {
+                // Debug.LogWarning($"[InformativeDoorIcons] RegisterWeakDoor: duplicate registration for ID {physicalDoorInstanceId}, skipping.");
+                return;
+            }
+
             // Capture the APEX characterSpacing before the Setup patch changes it.
             // 0f is the correct fallback — it is Unity's TextMeshPro default.
             float origApexSpacing = 0f;
@@ -215,7 +243,6 @@ namespace InformativeDoorIcons
             {
                 GuiItem                 = guiItem,
                 PhysicalDoor            = physicalDoor,
-                OriginalLocatorPos      = guiItem.m_locatorTxt.gameObject.transform.localPosition,
                 OriginalApexCharSpacing = origApexSpacing,
             };
         }
@@ -261,9 +288,8 @@ namespace InformativeDoorIcons
         // ---- Cached config values ----
         // All reads during Setup and hot-reload go through these fields.
         // Toggles:
-        public static bool CfgFixDoorNamePositions          = true;
         public static bool CfgChangeWeakDoorColors          = true;
-        public static bool CfgChangeApexToAlarm             = true;
+        public static bool CfgExtraDoorStateInformation     = true; // not retroactive
         public static bool CfgStyleFreeSecurityDoors        = true;
         public static bool CfgSecurityDoorKeycardMatchColor = true;
 
@@ -288,9 +314,8 @@ namespace InformativeDoorIcons
         // Contains no Unity API calls, but is always invoked on the main thread in practice (from Load() at startup and from DoorIconsUpdater.Update() at runtime).
         public static void RefreshConfig()
         {
-            CfgFixDoorNamePositions          = InformativeDoorIconsPlugin.FixDoorNamePositions.Value;
             CfgChangeWeakDoorColors          = InformativeDoorIconsPlugin.ChangeWeakDoorColors.Value;
-            CfgChangeApexToAlarm             = InformativeDoorIconsPlugin.ChangeApexToAlarm.Value;
+            CfgExtraDoorStateInformation     = InformativeDoorIconsPlugin.ExtraDoorStateInformation.Value;
             CfgStyleFreeSecurityDoors        = InformativeDoorIconsPlugin.StyleFreeSecurityDoors.Value;
             CfgSecurityDoorKeycardMatchColor = InformativeDoorIconsPlugin.SecurityDoorKeycardMatchColor.Value;
 
@@ -301,9 +326,8 @@ namespace InformativeDoorIcons
 
             // juicy logs
             Debug.Log($"[InformativeDoorIcons] Config refreshed -> " +
-                      $"fixPosNames={CfgFixDoorNamePositions} "      +
                       $"weakColors={CfgChangeWeakDoorColors} "       +
-                      $"apex={CfgChangeApexToAlarm} "                +
+                      $"apex={CfgExtraDoorStateInformation} "        +
                       $"freeStyle={CfgStyleFreeSecurityDoors} "      + 
                       $"keycard={CfgSecurityDoorKeycardMatchColor} " +
                       $"meleeC={CfgMeleeClosedColor} "               + 
@@ -355,9 +379,7 @@ namespace InformativeDoorIcons
             if (doorEntry.GuiItem == null) return;
 
             // ---- Fix door name position ----
-            doorEntry.GuiItem.m_locatorTxt.gameObject.transform.localPosition = CfgFixDoorNamePositions
-                ? new Vector3(0f, 5.5f, 0f)
-                : doorEntry.OriginalLocatorPos;
+            doorEntry.GuiItem.m_locatorTxt.gameObject.transform.localPosition = new Vector3(0f, 5.5f, 0f);
 
             // ---- Weak door color ----
             if (!CfgChangeWeakDoorColors)
@@ -388,23 +410,23 @@ namespace InformativeDoorIcons
             if (doorEntry.GuiItem == null) return;
 
             // ---- Fix door name position ----
-            doorEntry.GuiItem.m_locatorTxt.gameObject.transform.localPosition = CfgFixDoorNamePositions ? new Vector3(0f, 5.5f, 0f) : doorEntry.OriginalLocatorPos;
+            doorEntry.GuiItem.m_locatorTxt.gameObject.transform.localPosition = new Vector3(0f, 5.5f, 0f);
 
             // ---- Fix "APEX" text z-fighting ----
             foreach (MeshRenderer mesh in doorEntry.GuiItem.m_gfxSecureApex.GetComponentsInChildren<MeshRenderer>())
                 mesh.sortingOrder = 2;
 
-            // ---- Replace "APEX" label with "ALARM" (or revert) ----
-            // Combined both states so the check works on any re-apply regardless of what a previous run may have written.
+
+            // ----------- Extra Door Info, change APEX to ALARM -----------
             foreach (TextMeshPro tmp in doorEntry.GuiItem.m_gfxSecureApex.GetComponentsInChildren<TextMeshPro>())
             {
                 bool isApex  = tmp.m_text.ContainsIgnoreCase("APEX");
                 bool isAlarm = tmp.m_text.ContainsIgnoreCase("ALARM");
                 if (!isApex && !isAlarm) continue; // if neither, gtfo
 
-                if (CfgChangeApexToAlarm)
+                if (CfgExtraDoorStateInformation)
                 {
-                    tmp.text             = "ALARM";
+                    tmp.text = "ALARM";
                     tmp.characterSpacing = 8f;
                 }
                 else
@@ -624,261 +646,428 @@ namespace InformativeDoorIcons
                 }
             }
         }
-    }
+
+        // ---------------------------------------------------------------------------------
+        // This will add valid pieces of bonus information to Security Doors:
+        // - Key name (this is actually just carried over from the existing text if it exists)
+        // - Specific Alarm classification
+        // - Zone progression
+        // - Lockdown status
+        // - Power Generator name
+        //
+        // Called from:
+        // - CM_SyncedGUIItem.SetVisible()            -- Should only happen once, when a player first discovers the door, which forces a OnSyncDoorStatusChange()
+        // - CM_SyncedGUIItem.SyncSetStatus()         -- When the GUI of the door icon changes, which can sometimes happen even before the door state changes
+        // - LG_SecurityDoor.OnSyncDoorStatusChange() -- When the state of the door changes, because some states don't change the icon
+        // ---------------------------------------------------------------------------------
+        internal static void DoorFlavorText(LG_SecurityDoor doorSL, CM_SyncedGUIItem GUI, eDoorStatus status)
+        {
+            // Do nothing if Extra Door Deets = False
+            if (InformativeDoorIconsPlugin.ExtraDoorStateInformation.Value == false) return;
+
+            // some tags to make things easier
+            bool hasKeyText    = false;
+            bool hasBonusText  = false;
+            bool isLockdownOrPowerRestricted = false;
+
+            // Add a small outline around the Security Door's bottom text
+            Material mat = GUI.m_additionalTxt.fontMaterial;
+            mat.EnableKeyword("OUTLINE_ON");
+            mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.15f); // Thickness (0.0 to 1.0, typically keep it low like 0.1–0.3)
+            mat.SetColor(ShaderUtilities.ID_OutlineColor, new Color(0, 0, 0, .5f));
+            mat.SetFloat(ShaderUtilities.ID_OutlineSoftness, 0);
+
+            // ------- Zone Progression (in door title) -------
+            // IE: "This leads to bla bla long text: ZONE123"
+            if (doorSL.m_terminalNavInfoForward.Count > 0)
+            {
+                // Extract the ZoneID out of the messy progression text
+                string fullText = doorSL.m_terminalNavInfoForward[0];
+                string marker = "ZONE";
+                int lastIndex = fullText.LastIndexOf(marker);
+                string zoneID = lastIndex >= 0 ? fullText.Substring(lastIndex + marker.Length) : fullText;
+
+                // If we resolved a good zoneID, apply and style it up
+                if (zoneID != fullText)
+                {
+                    GUI.m_locatorTxt.text = $"<size=30><color=#00ff33>Entering: Zone {zoneID}</color></size><br>{doorSL.m_terminalItem.TerminalItemKey}";
+                    GUI.m_locatorTxt.fontSizeMin = 36;
+                    GUI.m_locatorTxt.ForceMeshUpdate();
+                }
+            }
+
+            LG_SecurityDoor_Locks doorLocks = doorSL.gameObject.GetComponent<LG_SecurityDoor_Locks>();
+
+            // ------- Key door -------
+            // CRITICAL: This (or a future) top-level IF() MUST return an absolute string.
+            // If it doesn't, future checks will cascade with a massive amount of duplciated text.
+            if (status == eDoorStatus.Closed_LockedWithKeyItem || GUI.Status == eCM_GuiObjectStatus.DoorSecureKeycard || GUI.m_status == eCM_GuiObjectStatus.DoorSecureKeycard)
+            {
+                GUI.m_additionalTxt.text = $"REQ: {doorSL.m_keyItem.PublicName}";
+                hasKeyText = true;
+            }
+            else if (status == eDoorStatus.Closed_LockedWithBulkheadDC)
+            {
+                GUI.m_additionalTxt.text = $"REQ: {doorLocks.m_bulkheadDCNeeded.PublicName}";
+                GUI.m_additionalTxt.color = new Color(1, 0.5279f, 0.0221f, 1);
+
+                hasKeyText = true;
+                hasBonusText = true;
+            }
+            else GUI.m_additionalTxt.text = ""; // zero out the text if there wasn't any good default text (only key text afaik)
+
+            // ------- Lockdown -------
+            if (status == eDoorStatus.Closed_LockedWithNoKey)
+            {
+                if (hasKeyText || hasBonusText)
+                {
+                    GUI.m_additionalTxt.text += "<br><color=#ffcc00>LOCKDOWN</color>";
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                }
+                else
+                {
+                    GUI.m_additionalTxt.text = "LOCKDOWN";
+                    GUI.m_additionalTxt.color = new Color(1, 0.8f, 0, 1);
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                }
+
+                hasBonusText = true;
+                isLockdownOrPowerRestricted = true;
+            }
+
+            // ------- Generator/Cell Required -------
+            if (doorSL.m_sync.GetCurrentSyncState().status == eDoorStatus.Closed_LockedWithPowerGenerator)
+            {
+                string requiredGen = doorLocks.m_powerGeneratorNeeded.m_itemKey;
+
+                if (hasKeyText || hasBonusText)
+                {
+                    if (requiredGen != null) GUI.m_additionalTxt.text += $"<br><color=#ffcc00>REQ: {requiredGen}</color>";
+                                        else GUI.m_additionalTxt.text +=  "<br><color=#ffcc00>REQ: POWER CELL</color>";
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                }
+                else
+                {
+                    if (requiredGen != null) GUI.m_additionalTxt.text = $"REQ: {requiredGen}";
+                                        else GUI.m_additionalTxt.text =  "REQ: POWER CELL";
+
+                    GUI.m_additionalTxt.color = new Color(1, 0.8f, 0, 1);
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                }
+
+                hasBonusText = true;
+                isLockdownOrPowerRestricted = true;
+            }
+
+            // ------- Alarm door -------
+            // IE: Class III Spooky Alarm
+            if (!isLockdownOrPowerRestricted
+            && !hasKeyText
+            &&  doorLocks.m_hasAlarm
+            && !doorLocks.ChainedPuzzleToSolve.IsSolved
+            &&  doorLocks.ChainedPuzzleToSolve.Data.PublicAlarmName != null
+            &&  status != eDoorStatus.Open
+            &&  status != eDoorStatus.Opening
+            && (GUI.Status != eCM_GuiObjectStatus.DoorSecureOpen || GUI.m_status != eCM_GuiObjectStatus.DoorSecureOpen))
+            {
+                if (hasKeyText || hasBonusText)
+                {
+                    GUI.m_additionalTxt.text     += $"<br><color=red>{doorLocks.ChainedPuzzleToSolve.Data.PublicAlarmName}</color>";
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                }
+                else
+                {
+                    GUI.m_additionalTxt.text      = $"{doorLocks.ChainedPuzzleToSolve.Data.PublicAlarmName}";
+                    GUI.m_additionalTxt.color = Color.red;
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                }
+
+                hasBonusText = true;
+            }
+
+            // ------- Blood Door -------
+            if (doorSL.ActiveEnemyWaveData != null && status != eDoorStatus.Open && status != eDoorStatus.Opening)
+            {
+                // Blood Door
+                if (hasKeyText || hasBonusText)
+                {
+                    GUI.m_additionalTxt.text += "<br><color=#ff1313>MOTION DETECTED</color>";
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                }
+                else
+                {
+                    GUI.m_additionalTxt.text  = "MOTION DETECTED";
+                    GUI.m_additionalTxt.color = new Color(1, 0.075f, 0.075f, 1);
+                    GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                }
+
+                hasBonusText = true;
+            }
+
+            /*
+            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor lockdown/power: {isLockdownOrPowerRestricted}");
+            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor bonus text: {hasBonusText}");
+            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor imported status: {status}");
+            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor last status: {doorSL.LastStatus}");
+            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor text: {GUI.m_additionalTxt.text}");
+            */
+
+            GUI.m_additionalTxt.fontSizeMax = 50;
+            GUI.m_additionalTxt.gameObject.GetComponent<MeshRenderer>().sortingOrder = 4; // make the text above all other sprites
+            GUI.m_additionalTxt.transform.localPosition = new Vector3(-0.4f, -5.1f, 0); // move it away from the door sligtly
+            if (!GUI.m_additionalTxt.gameObject.activeSelf) GUI.m_additionalTxt.gameObject.SetActive(true);
+            GUI.m_additionalTxt.ForceMeshUpdate(true, true);
+        }
 
     
 
 
-    // ============================================================
-    //  Harmony patches
-    // ============================================================
+        // ============================================================
+        //  Harmony patches
+        // ============================================================
 
-/* used for debugging custom KEY_BLACK door sprites
-    [HarmonyPatch(typeof(GateKeyItem), nameof(GateKeyItem.Setup))]
-    public static class InformativeDoorIcons_GateKeyItem_Setup_NameChangeForDebug
-    {
-        public static void Postfix(GateKeyItem __instance)
+        /* used for debugging custom KEY_BLACK door sprites
+        [HarmonyPatch(typeof(GateKeyItem), nameof(GateKeyItem.Setup))]
+        public static class InformativeDoorIcons_GateKeyItem_Setup_NameChangeForDebug
         {
-            __instance.m_keyName = "KEY_BLACK";
-        }
-    }
-*/
-
-    // ============================================================
-    //  Reset our door registers every mission.
-    // ============================================================
-    [HarmonyPatch(typeof(GS_Lobby), nameof(GS_Lobby.TryStartLevelTrigger))]
-    public static class InformativeDoorIcons_GS_Lobby_TryStartLevelTrigger_NameChangeForDebug
-    {
-        public static void Postfix(GS_Lobby __instance)
-        {
-            if (DoorManager.s_weakDoor.Count > 0) DoorManager.s_weakDoor.Clear();
-            if (DoorManager.s_securityDoor.Count > 0) DoorManager.s_securityDoor.Clear();
-        }
-    }
-    // ============================================================
-    //  Resets a weak door's custom inner-sprite color back to the game defaults once both locks have been unlocked.
-    // ============================================================
-    [HarmonyPatch(typeof(LG_WeakLock), nameof(LG_WeakLock.OnSyncStatusChanged))]
-    public static class InformativeDoorIcons_LG_WeakLock_OnSyncStatusChanged_DoorLockCheckForUnlocked
-    {
-        public static void Postfix(LG_WeakLock __instance, eWeakLockStatus status)
-        {
-            if (status != eWeakLockStatus.Unlocked) return;
-
-            // If we never applied custom colors, there is nothing to reset.
-            if (!DoorManager.CfgChangeWeakDoorColors) return;
-
-            // lmfao
-            // LG_WeakDoor physicalDoor_WL = __instance.gameObject.transform.parent.transform.parent.transform.parent.transform.parent.transform.parent.GetComponent<LG_WeakDoor>();
-            LG_WeakDoor physicalDoor_WL = __instance.gameObject.GetComponentInParents<LG_WeakDoor>();
-
-            if (physicalDoor_WL == null) return;
-
-            // If either of the locks != Unlocked, don't act. We need both to be Unlocked.
-            if (physicalDoor_WL.WeakLocks[0].Status != eWeakLockStatus.Unlocked || physicalDoor_WL.WeakLocks[1].Status != eWeakLockStatus.Unlocked) return;
-
-            // Look up the map-marker GUI that was registered during Setup.
-            if (!DoorManager.TryGetWeakDoorGUI(physicalDoor_WL.gameObject.GetInstanceID(), out CM_SyncedGUIItem guiItem))
+            public static void Postfix(GateKeyItem __instance)
             {
-                Debug.LogWarning("[InformativeDoorIcons] OnSyncStatusChanged: no GUI entry found for unlocked weak door.");
-                return;
-            }
-
-            // closed sprite
-            foreach (SpriteRenderer sprite in guiItem.m_gfxWeakClosed.GetComponentsInChildren<SpriteRenderer>())
-            {
-                if (!DoorManager.IsInnerSprite(sprite.gameObject.name)) continue;
-                sprite.color = DoorManager.WeakDoorDefaultClosed;
-            }
-            // open sprite
-            foreach (SpriteRenderer sprite in guiItem.m_gfxWeakOpen.GetComponentsInChildren<SpriteRenderer>())
-            {
-                if (!DoorManager.IsInnerSprite(sprite.gameObject.name)) continue;
-                sprite.color = DoorManager.WeakDoorDefaultOpen;
+                __instance.m_keyName = "KEY_BLACK";
             }
         }
-    }
+        */
 
-
-    // ============================================================
-    // The hotness. Runs once per door per map-load as each door GUI is created.
-    // - Guard on m_gfxSecureApex to confirm this is a door GUI. I'm pretty sure all non-door GUI have null door sprites, so any of them would work.
-    // - Ensure DoorIconsUpdater is alive (hot-reload requires it).
-    // - Figure out what kind of door it is.
-    // - Register the door.
-    // - Push the door entry to the external function so that I don't have to do this twice with the hot-loader.
-    // - Make sure the KEY_BLACK custom sprite is loaded if needed.
-    // ============================================================
-    [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.Setup))]
-    public static class InformativeDoorIcons_CM_SyncedGUIItem_Setup_DoorColoration
-    {
-        public static void Postfix(CM_SyncedGUIItem __instance)
+        // ============================================================
+        //  Reset our door registers every mission.
+        // ============================================================
+        [HarmonyPatch(typeof(GS_Lobby), nameof(GS_Lobby.TryStartLevelTrigger))]
+        public static class InformativeDoorIcons_GS_Lobby_TryStartLevelTrigger_NameChangeForDebug
         {
-            if (__instance.m_gfxSecureApex == null) return; // null = Not a door GUI.
-
-            // Ensure the per-frame updater exists (created once, persists for the session).
-            DoorIconsUpdater.EnsureCreated();
-
-            GameObject physicalDoor_GO = __instance.RevealerBase.transform.parent.parent.gameObject;
-            int        instanceId      = physicalDoor_GO.GetInstanceID();
-
-            __instance.m_locatorTxt.GetComponent<MeshRenderer>().sortingOrder = 10;
-
-            // ---- Weak Door ----
-            LG_WeakDoor physicalDoor_WL = physicalDoor_GO.GetComponent<LG_WeakDoor>();
-            if (physicalDoor_WL != null)
+            public static void Postfix(GS_Lobby __instance)
             {
-                // Make sure it has locks
-                if (physicalDoor_WL.WeakLocks == null) return;
-                // Used for late-join protection
-                if (physicalDoor_WL.WeakLocks[0].Status == eWeakLockStatus.Unlocked && physicalDoor_WL.WeakLocks[1].Status == eWeakLockStatus.Unlocked) return;
-
-                bool isMeleeLocked = physicalDoor_WL.WeakLocks[0].m_lockType == eWeakLockType.Melee    || physicalDoor_WL.WeakLocks[1].m_lockType == eWeakLockType.Melee;
-                bool isHack        = physicalDoor_WL.WeakLocks[0].m_lockType == eWeakLockType.Hackable || physicalDoor_WL.WeakLocks[1].m_lockType == eWeakLockType.Hackable;
-
-                // Register: captures OriginalLocatorPos from the unmodified transform.
-                DoorManager.RegisterWeakDoor(instanceId, __instance, physicalDoor_WL, isMeleeLocked, isHack);
-                // Debug.LogWarning($"[InformativeDoorIcons] WeakDoor registered: {instanceId}");
-
-                // Retrieve the stored entry w/ orig values, then push to color logic. Done to avoid duplicate re-color logic for hot-loading.
-                if (DoorManager.TryGetWeakDoorEntry(instanceId, out DoorManager.WeakDoorEntry wEntry))
-                    DoorManager.ApplyConfigToWeakDoor(wEntry);
-
-                return;
+                if (DoorManager.s_weakDoor.Count > 0) DoorManager.s_weakDoor.Clear();
+                if (DoorManager.s_securityDoor.Count > 0) DoorManager.s_securityDoor.Clear();
             }
-
-
-            // ---- Security Door ----
-            LG_SecurityDoor physicalDoor_SL = physicalDoor_GO.GetComponent<LG_SecurityDoor>();
-            if (physicalDoor_SL != null)
+        }
+        // ============================================================
+        //  Resets a weak door's custom inner-sprite color back to the game defaults once both locks have been unlocked.
+        // ============================================================
+        [HarmonyPatch(typeof(LG_WeakLock), nameof(LG_WeakLock.OnSyncStatusChanged))]
+        public static class InformativeDoorIcons_LG_WeakLock_OnSyncStatusChanged_DoorLockCheckForUnlocked
+        {
+            public static void Postfix(LG_WeakLock __instance, eWeakLockStatus status)
             {
+                if (status != eWeakLockStatus.Unlocked) return;
 
-                // Register: captures OriginalLocatorPos and OriginalApexCharSpacing.
-                DoorManager.RegisterSecurityDoor(instanceId, __instance, physicalDoor_SL);
-                // Debug.LogWarning($"[InformativeDoorIcons] SecurityDoor registered: {instanceId}");
+                // If we never applied custom colors, there is nothing to reset.
+                if (!CfgChangeWeakDoorColors) return;
 
-                // Retrieve the stored entry w/ orig values, then push to color logic. Done to avoid duplicate re-color logic for hot-loading.
-                if (DoorManager.TryGetSecurityDoorEntry(instanceId, out DoorManager.SecurityDoorEntry sEntry))
-                    DoorManager.ApplyConfigToSecurityDoor(sEntry);
+                // lmfao
+                // LG_WeakDoor physicalDoor_WL = __instance.gameObject.transform.parent.transform.parent.transform.parent.transform.parent.transform.parent.GetComponent<LG_WeakDoor>();
+                LG_WeakDoor physicalDoor_WL = __instance.gameObject.GetComponentInParents<LG_WeakDoor>();
 
-                // ---- KEY_BLACK outline sprite (Setup-only) ----
-                // ApplyConfigToSecurityDoor re-applies the inner-sprite color on hot-reload.
-                if (DoorManager.CfgSecurityDoorKeycardMatchColor && physicalDoor_SL.m_keyItem != null && physicalDoor_SL.m_keyItem.m_keyName == "KEY_BLACK")
+                if (physicalDoor_WL == null)
                 {
-                    if (DoorManager.TryGetSecurityDoorEntry(instanceId, out DoorManager.SecurityDoorEntry sEntryForClones))
-                        DoorManager.CreateBlackKeyOutlineClones(instanceId, sEntryForClones);
+                    return;
                 }
 
-                // We're prepping the custom sprites here, which SHOULD make them ready to be set when needed on Visible() call
-                string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                // If either of the locks != Unlocked, don't act. We need both to be Unlocked.
+                if (physicalDoor_WL.WeakLocks[0].Status != eWeakLockStatus.Unlocked || physicalDoor_WL.WeakLocks[1].Status != eWeakLockStatus.Unlocked) return;
 
-                if (physicalDoor_SL.LinksToLayerType == LG_LayerType.MainLayer) // Main
+                // Look up the map-marker GUI that was registered during Setup.
+                if (!TryGetWeakDoorGUI(physicalDoor_WL.gameObject.GetInstanceID(), out CM_SyncedGUIItem guiItem))
                 {
-                    if (DoorManager.BulkMainSprite == null)
+                    Debug.LogWarning("[InformativeDoorIcons] OnSyncStatusChanged: no GUI entry found for unlocked weak door.");
+                    return;
+                }
+
+                // closed sprite
+                foreach (SpriteRenderer sprite in guiItem.m_gfxWeakClosed.GetComponentsInChildren<SpriteRenderer>())
+                {
+                    if (!IsInnerSprite(sprite.gameObject.name)) continue;
+                    sprite.color = new(0.3373f, 0.3529f, 0.2549f, 1f);
+                }
+                // open sprite
+                foreach (SpriteRenderer sprite in guiItem.m_gfxWeakOpen.GetComponentsInChildren<SpriteRenderer>())
+                {
+                    if (!IsInnerSprite(sprite.gameObject.name)) continue;
+                    sprite.color = new(0.3373f, 0.3529f, 0.2549f, 0.0549f);
+                }
+            }
+        }
+
+
+        // ============================================================
+        // The hotness. Runs once per door per map-load as each door GUI is created.
+        // - Guard on m_gfxSecureApex to confirm this is a door GUI. I'm pretty sure all non-door GUI have null door sprites, so any of them would work.
+        // - Ensure DoorIconsUpdater is alive (hot-reload requires it).
+        // - Figure out what kind of door it is.
+        // - Register the door.
+        // - Push the door entry to the external function so that I don't have to do this twice with the hot-loader.
+        // - Make sure the KEY_BLACK custom sprite is loaded if needed.
+        // ============================================================
+        [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.Setup))]
+        public static class InformativeDoorIcons_CM_SyncedGUIItem_Setup_DoorColoration
+        {
+            public static void Postfix(CM_SyncedGUIItem __instance)
+            {
+                if (__instance.m_gfxSecureApex == null) return; // null = Not a door GUI.
+
+                // Ensure the per-frame updater exists (created once, persists for the session).
+                DoorIconsUpdater.EnsureCreated();
+
+                GameObject physicalDoor_GO = __instance.RevealerBase.transform.parent.parent.gameObject;
+                int        instanceId      = physicalDoor_GO.GetInstanceID();
+
+                __instance.m_locatorTxt.GetComponent<MeshRenderer>().sortingOrder = 4;
+
+                // ---- Weak Door ----
+                LG_WeakDoor physicalDoor_WL = physicalDoor_GO.GetComponent<LG_WeakDoor>();
+                if (physicalDoor_WL != null)
+                {
+                    // Make sure it has locks
+                    if (physicalDoor_WL.WeakLocks == null) return;
+                    // Used for late-join protection
+                    if (physicalDoor_WL.WeakLocks[0].Status == eWeakLockStatus.Unlocked && physicalDoor_WL.WeakLocks[1].Status == eWeakLockStatus.Unlocked) return;
+
+                    bool isMeleeLocked = physicalDoor_WL.WeakLocks[0].m_lockType == eWeakLockType.Melee    || physicalDoor_WL.WeakLocks[1].m_lockType == eWeakLockType.Melee;
+                    bool isHack        = physicalDoor_WL.WeakLocks[0].m_lockType == eWeakLockType.Hackable || physicalDoor_WL.WeakLocks[1].m_lockType == eWeakLockType.Hackable;
+
+                    // Register:
+                    RegisterWeakDoor(instanceId, __instance, physicalDoor_WL, isMeleeLocked, isHack);
+                    // Debug.LogWarning($"[InformativeDoorIcons] WeakDoor registered: {instanceId}");
+
+                    // Retrieve the stored entry w/ orig values, then push to color logic. Done to avoid duplicate re-color logic for hot-loading.
+                    if (TryGetWeakDoorEntry(instanceId, out WeakDoorEntry wEntry))
+                        ApplyConfigToWeakDoor(wEntry);
+
+                    return;
+                }
+
+
+                // ---- Security Door ----
+                LG_SecurityDoor physicalDoor_SL = physicalDoor_GO.GetComponent<LG_SecurityDoor>();
+                if (physicalDoor_SL != null)
+                {
+                    // __instance.m_locatorTxt.color = new Color(1, 0.05f, 0.05f, 1);
+                    Material mat = __instance.m_locatorTxt.fontMaterial;
+                    mat.EnableKeyword("OUTLINE_ON");
+                    mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.15f); // Thickness (0.0 to 1.0, typically keep it low like 0.1–0.3)
+                    mat.SetColor(ShaderUtilities.ID_OutlineColor, new Color(0, 0, 0, .5f));
+                    mat.SetFloat(ShaderUtilities.ID_OutlineSoftness, 0);
+
+                    // Register:
+                    RegisterSecurityDoor(instanceId, __instance, physicalDoor_SL);
+                    // Debug.LogWarning($"[InformativeDoorIcons] SecurityDoor registered: {instanceId}");
+
+                    // Retrieve the stored entry w/ orig values, then push to color logic. Done to avoid duplicate re-color logic for hot-loading.
+                    if (TryGetSecurityDoorEntry(instanceId, out SecurityDoorEntry sEntry))
+                        ApplyConfigToSecurityDoor(sEntry);
+
+                    // ---- KEY_BLACK outline sprite (Setup-only) ----
+                    // ApplyConfigToSecurityDoor re-applies the inner-sprite color on hot-reload.
+                    if (CfgSecurityDoorKeycardMatchColor && physicalDoor_SL.m_keyItem != null && physicalDoor_SL.m_keyItem.m_keyName == "KEY_BLACK")
                     {
-                        byte[] pngBytes  = File.ReadAllBytes(Path.Combine(pluginDir, "bulkMain.png"));
-                        var tex          = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
-                        tex.filterMode   = FilterMode.Point;
-                        tex.LoadImage(pngBytes);
-                        DoorManager.BulkMainSprite  = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100);
+                        if (TryGetSecurityDoorEntry(instanceId, out SecurityDoorEntry sEntryForClones))
+                            CreateBlackKeyOutlineClones(instanceId, sEntryForClones);
+                    }
+
+                    // We're prepping the custom sprites here, which SHOULD make them ready to be set when needed on Visible() call
+                    string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+
+                    if (physicalDoor_SL.LinksToLayerType == LG_LayerType.MainLayer) // Main
+                    {
+                        if (BulkMainSprite == null)
+                        {
+                            byte[] pngBytes  = File.ReadAllBytes(Path.Combine(pluginDir, "bulkMain.png"));
+                            var tex          = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
+                            tex.filterMode   = FilterMode.Point;
+                            tex.LoadImage(pngBytes);
+                            BulkMainSprite  = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100);
+                        }
+                    }
+                    else if (physicalDoor_SL.LinksToLayerType == LG_LayerType.SecondaryLayer) // Secondary "Extreme"
+                    {
+                        if (BulkSecondarySprite == null)
+                        {
+                            byte[] pngBytes = File.ReadAllBytes(Path.Combine(pluginDir, "bulkSecondary.png"));
+                            var tex         = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
+                            tex.filterMode  = FilterMode.Point;
+                            tex.LoadImage(pngBytes);
+                            BulkSecondarySprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100);
+                        }
+                    }
+                    else if (physicalDoor_SL.LinksToLayerType == LG_LayerType.ThirdLayer) // Overload
+                    {
+                        if (BulkOverloadSprite == null)
+                        {
+                            byte[] pngBytes = File.ReadAllBytes(Path.Combine(pluginDir, "bulkOverload.png"));
+                            var tex         = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
+                            tex.filterMode  = FilterMode.Point;
+                            tex.LoadImage(pngBytes);
+                            BulkOverloadSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100);
+                        }
                     }
                 }
-                else if (physicalDoor_SL.LinksToLayerType == LG_LayerType.SecondaryLayer) // Secondary "Extreme"
+            }
+        }
+
+        // ============================================================
+        // CM_SyncedGUIItem sets its own rotation at some dumb point. I've chosen to target its
+        // visibility state for rotation changes, since the best possible chance to have a set rotation.
+        // Because I'm really lazy right now, I also tied in the icon swap in the same hook.
+        //
+        // To avoid clutter in this area, I've sent the references off to a dedicated class.
+        // ============================================================
+        [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SetVisible))]
+        public static class InformativeDoorIcons_CM_SyncedGUIItem_SetVisible_SecDoorStyle
+        {
+            public static void Prefix(CM_SyncedGUIItem __instance, bool visible)
+            {
+                if (__instance.m_gfxSecureApex == null || visible == false) return; // null = Not a door GUI.
+
+                LG_SecurityDoor physicalDoor_SL = __instance.RevealerBase.gameObject.GetComponentInParents<LG_SecurityDoor>();
+
+                if (physicalDoor_SL != null)
                 {
-                    if (DoorManager.BulkSecondarySprite == null)
-                    {
-                        byte[] pngBytes = File.ReadAllBytes(Path.Combine(pluginDir, "bulkSecondary.png"));
-                        var tex         = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
-                        tex.filterMode  = FilterMode.Point;
-                        tex.LoadImage(pngBytes);
-                        DoorManager.BulkSecondarySprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100);
-                    }
+                    // Change out bulkhead sprites
+                    BulkheadDoorIconSwap(physicalDoor_SL, __instance);
+
+                    // On visible(), we're forcing the door to update its state.
+                    DoorFlavorText(physicalDoor_SL, __instance, physicalDoor_SL.m_sync.GetCurrentSyncState().status); // labeling function
+                    // Debug.LogWarning("[InformativeDoorIcons] CM_SyncedGUIItem.SetVisible ran");
                 }
-                else if (physicalDoor_SL.LinksToLayerType == LG_LayerType.ThirdLayer) // Overload
+            }
+        }
+
+        // This patch is mainly required to avoid auto-hidden labels.
+        [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SyncSetStatus))]
+        public static class InformativeDoorIcons_CM_SyncedGUIItem_SyncSetStatus_SecDoorStyle
+        {
+            public static void Postfix(CM_SyncedGUIItem __instance)
+            {
+                if (__instance.m_gfxSecureApex == null) return; // null = Not a door GUI.
+
+                LG_SecurityDoor physicalDoor_SL = __instance.RevealerBase.gameObject.GetComponentInParents<LG_SecurityDoor>();
+
+                if (physicalDoor_SL != null)
                 {
-                    if (DoorManager.BulkOverloadSprite == null)
-                    {
-                        byte[] pngBytes = File.ReadAllBytes(Path.Combine(pluginDir, "bulkOverload.png"));
-                        var tex         = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
-                        tex.filterMode  = FilterMode.Point;
-                        tex.LoadImage(pngBytes);
-                        DoorManager.BulkOverloadSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100);
-                    }
+                    DoorFlavorText(physicalDoor_SL, __instance, physicalDoor_SL.m_sync.GetCurrentSyncState().status);
+                    // Debug.LogWarning("[InformativeDoorIcons] CM_SyncedGUIItem.SyncSetStatus ran");
                 }
             }
         }
-    }
 
-    // ============================================================
-    // Because CM_SyncedGUIItem sets its own rotation at some dump point, I've chosen to target its
-    // visibility state, the best possible chance to have a set rotation, to make rotation changes.
-    // Because I'm really lazy right now, I also tied in the icon swap in the same hook.
-    //
-    // To avoid clutter in this area, I've sent the references off to a dedicated class.
-    // ============================================================
-    [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SetVisible))]
-    public static class InformativeDoorIcons_CM_SyncedGUIItem_SetVisible_BulkheadSymbolChangeAndRotation
-    {
-        public static void Prefix(CM_SyncedGUIItem __instance, bool visible)
+        // Our main "door state has changed" hook for adjusting the Sec Door labels.
+        [HarmonyPatch(typeof(LG_SecurityDoor), nameof(LG_SecurityDoor.OnSyncDoorStatusChange))]
+        public static class InformativeDoorIcons_LG_SecurityDoor_OnSyncDoorStatusChange_SecDoorStyle
         {
-            if (__instance.m_gfxSecureApex == null || visible == false) return; // null = Not a door GUI.
-
-            LG_SecurityDoor physicalDoor_SL = __instance.RevealerBase.transform.parent.parent.gameObject.GetComponent<LG_SecurityDoor>();
-
-            if (physicalDoor_SL != null)
+            public static void Postfix(LG_SecurityDoor __instance)
             {
-                DoorManager.BulkheadDoorIconSwap(physicalDoor_SL, __instance);
+                TryGetSecurityDoorEntry(__instance.gameObject.GetInstanceID(), out SecurityDoorEntry doorEntry);
+                DoorFlavorText(__instance, doorEntry.GuiItem, __instance.LastStatus);
+                // Debug.LogWarning("[InformativeDoorIcons] OnSyncDoorStatusChange ran");
             }
         }
     }
-
-
-/* Doesn't happen at all?
-    [HarmonyPatch(typeof(LG_SecurityDoor), nameof(LG_SecurityDoor.SetNavInfo))]
-    public static class InformativeDoorIcons_LG_SecurityDoor_SetNavInfo_DetectProgression
-    {
-        public static void Postfix(LG_SecurityDoor __instance, LG_PowerGenerator_Core powerGenerator)
-        {
-            Debug.LogWarning($"[InformativeDoorIcons] SetNavInfo ran");
-            if (!DoorManager.TryGetWeakDoorGUI(__instance.gameObject.GetInstanceID(), out CM_SyncedGUIItem guiItem))
-            {
-                Debug.LogWarning($"[InformativeDoorIcons] SetupPowerGeneratorLock: no GUI entry found for {__instance.gameObject.GetInstanceID()}");
-                return;
-            }
-            Debug.LogWarning($"[InformativeDoorIcons] {guiItem.m_additionalTxt.text}");
-            Debug.LogWarning($"[InformativeDoorIcons] {__instance.m_terminalNavInfoForward}");
-            Debug.LogWarning($"[InformativeDoorIcons] {__instance.m_terminalNavInfoForward[0]}");
-            Debug.LogWarning($"[InformativeDoorIcons] {__instance.m_terminalNavInfoForward[1]}");
-
-            guiItem.m_additionalTxt.text = __instance.m_terminalNavInfoForward[0];
-            guiItem.m_additionalTxt.ForceMeshUpdate();
-        }
-    }
-*/
-
-    /*  happens too early
-    [HarmonyPatch(typeof(LG_SecurityDoor), nameof(LG_SecurityDoor.SetupPowerGeneratorLock))]
-    public static class InformativeDoorIcons_LG_SecurityDoor_SetupPowerGeneratorLock_ChangeReqText
-    {
-        public static void Postfix(LG_SecurityDoor __instance, LG_PowerGenerator_Core powerGenerator)
-        {
-            Debug.LogWarning("[InformativeDoorIcons] SetupPowerGeneratorLock ran");
-            if (!DoorManager.TryGetWeakDoorGUI(__instance.gameObject.GetInstanceID(), out CM_SyncedGUIItem guiItem))
-            {
-                Debug.LogWarning($"[InformativeDoorIcons] SetupPowerGeneratorLock: no GUI entry found for {__instance.gameObject.GetInstanceID()}");
-                return;
-            }
-
-            foreach (TextMeshPro tmp in guiItem.m_additionalTxt.GetComponentsInChildren<TextMeshPro>())
-            {
-                // turning it off and on is required, otherwise the text doesn't update
-                tmp.gameObject.SetActive(false);
-                tmp.m_text = $"REQ: CELL -> {powerGenerator.m_itemKey}";
-                tmp.characterSpacing = 8;
-                tmp.gameObject.SetActive(true);
-            }
-        }
-    }
-    */
 }
