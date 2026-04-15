@@ -13,13 +13,10 @@ using TMPro;
 using GTFO.API.Utilities;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
-using Unity.Collections;
-using System.Linq;
-using BepInEx.Logging;
 
 namespace InformativeDoorIcons
 {
-    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.2.0")]
+    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.2.2")]
     [BepInDependency("dev.gtfomodding.gtfo-api")]
     public class InformativeDoorIconsPlugin : BasePlugin
     {
@@ -27,6 +24,7 @@ namespace InformativeDoorIcons
 
         // Toggles
         public static ConfigEntry<bool> ExtraDoorStateInformation;
+        public static ConfigEntry<bool> DoorRotationAdjustment;
        public static ConfigEntry<bool> StyleFreeSecurityDoors;
         public static ConfigEntry<bool> SecurityDoorKeycardMatchColor;
         public static ConfigEntry<bool> ChangeWeakDoorColors;
@@ -47,6 +45,7 @@ namespace InformativeDoorIcons
 
             // General Toggles
             ExtraDoorStateInformation     = Config.Bind("Settings", "- Extra door information (Not Retroactive)", true, "For Security Doors, the bottom label is rewritten to display lockdowns, needed power, blood doors, and finally what zone it leads to.");
+            DoorRotationAdjustment        = Config.Bind("Settings", "- Door Rotation Adjustment (Not Retroactive)", true, "Rotates all door icons that are mostly upside-down doors to now be rightside-up. Also rotates left/right rotated doors to use the elevator as their center. This may or may not work well for all cases.");
 
             // Color stuff
             StyleFreeSecurityDoors        = Config.Bind("Settings", "Change the color for non-alarm Security Doors", true, "Add green coloration to non-alarmed \"free\" Security Door map icons.");
@@ -288,8 +287,9 @@ namespace InformativeDoorIcons
         // ---- Cached config values ----
         // All reads during Setup and hot-reload go through these fields.
         // Toggles:
-        public static bool CfgChangeWeakDoorColors          = true;
         public static bool CfgExtraDoorStateInformation     = true; // not retroactive
+        public static bool CfgDoorRotationAdjustment        = true; // not retroactive
+        public static bool CfgChangeWeakDoorColors          = true;
         public static bool CfgStyleFreeSecurityDoors        = true;
         public static bool CfgSecurityDoorKeycardMatchColor = true;
 
@@ -314,8 +314,9 @@ namespace InformativeDoorIcons
         // Contains no Unity API calls, but is always invoked on the main thread in practice (from Load() at startup and from DoorIconsUpdater.Update() at runtime).
         public static void RefreshConfig()
         {
-            CfgChangeWeakDoorColors          = InformativeDoorIconsPlugin.ChangeWeakDoorColors.Value;
             CfgExtraDoorStateInformation     = InformativeDoorIconsPlugin.ExtraDoorStateInformation.Value;
+            CfgDoorRotationAdjustment        = InformativeDoorIconsPlugin.DoorRotationAdjustment.Value;
+            CfgChangeWeakDoorColors          = InformativeDoorIconsPlugin.ChangeWeakDoorColors.Value;
             CfgStyleFreeSecurityDoors        = InformativeDoorIconsPlugin.StyleFreeSecurityDoors.Value;
             CfgSecurityDoorKeycardMatchColor = InformativeDoorIconsPlugin.SecurityDoorKeycardMatchColor.Value;
 
@@ -326,8 +327,9 @@ namespace InformativeDoorIcons
 
             // juicy logs
             Debug.Log($"[InformativeDoorIcons] Config refreshed -> " +
-                      $"weakColors={CfgChangeWeakDoorColors} "       +
                       $"apex={CfgExtraDoorStateInformation} "        +
+                      $"apex={CfgDoorRotationAdjustment}    "        +
+                      $"weakColors={CfgChangeWeakDoorColors} "       +
                       $"freeStyle={CfgStyleFreeSecurityDoors} "      + 
                       $"keycard={CfgSecurityDoorKeycardMatchColor} " +
                       $"meleeC={CfgMeleeClosedColor} "               + 
@@ -580,6 +582,12 @@ namespace InformativeDoorIcons
         {
             static bool IsInnerBulkheadSymbolSprite(string name) => name.ContainsIgnoreCase("symbol_bulkhead");
 
+
+
+
+
+
+
             // make a list, and apply stuff there, so we don't have to duplicate code several times
             // Applied at the bottom if count > 0
             List<SpriteRenderer> bulkSymbols = new();
@@ -665,10 +673,13 @@ namespace InformativeDoorIcons
             // Do nothing if Extra Door Deets = False
             if (InformativeDoorIconsPlugin.ExtraDoorStateInformation.Value == false) return;
 
+            GUI.m_additionalTxt.fontSizeMin = 22; // up from 18
+
             // some tags to make things easier
-            bool hasKeyText    = false;
-            bool hasBonusText  = false;
             bool isLockdownOrPowerRestricted = false;
+            bool hasKeyText    = false;
+            bool hasAlarmText    = false;
+            bool hasBonusText  = false;
 
             // Add a small outline around the Security Door's bottom text
             Material mat = GUI.m_additionalTxt.fontMaterial;
@@ -676,8 +687,9 @@ namespace InformativeDoorIcons
             mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.15f); // Thickness (0.0 to 1.0, typically keep it low like 0.1–0.3)
             mat.SetColor(ShaderUtilities.ID_OutlineColor, new Color(0, 0, 0, .5f));
             mat.SetFloat(ShaderUtilities.ID_OutlineSoftness, 0);
+            GUI.m_additionalTxt.fontMaterial.SetFloat("_FaceDilate", GUI.m_additionalTxt.outlineWidth);
 
-            // ------- Zone Progression (in door title) -------
+            // ------------------------------------ Zone Progression (inserted in door title) ------------------------------------
             // IE: "This leads to bla bla long text: ZONE123"
             if (doorSL.m_terminalNavInfoForward.Count > 0)
             {
@@ -696,30 +708,29 @@ namespace InformativeDoorIcons
                 }
             }
 
+
+            // --------------------------------------- Insert "bonus text" to Bottom Text  ---------------------------------------
+
             LG_SecurityDoor_Locks doorLocks = doorSL.gameObject.GetComponent<LG_SecurityDoor_Locks>();
+            bool doorIsOpen = status == eDoorStatus.Open || status == eDoorStatus.Opening;
 
-            // ------- Key door -------
-            // CRITICAL: This (or a future) top-level IF() MUST return an absolute string.
+            // CRITICAL: This (or a future) top-level IF() MUST return an absolute non += string.
             // If it doesn't, future checks will cascade with a massive amount of duplciated text.
-            if (status == eDoorStatus.Closed_LockedWithKeyItem || GUI.Status == eCM_GuiObjectStatus.DoorSecureKeycard || GUI.m_status == eCM_GuiObjectStatus.DoorSecureKeycard)
+            // ------- Checkpoint door -------
+            if (doorSL.IsCheckpointDoor)
             {
-                GUI.m_additionalTxt.text = $"REQ: {doorSL.m_keyItem.PublicName}";
-                hasKeyText = true;
-            }
-            else if (status == eDoorStatus.Closed_LockedWithBulkheadDC)
-            {
-                GUI.m_additionalTxt.text = $"REQ: {doorLocks.m_bulkheadDCNeeded.PublicName}";
-                GUI.m_additionalTxt.color = new Color(1, 0.5279f, 0.0221f, 1);
+                GUI.m_additionalTxt.text = "CHECKPOINT";
+                GUI.m_additionalTxt.color = new(0, 1, .2f, 1);
+                GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
 
-                hasKeyText = true;
                 hasBonusText = true;
             }
-            else GUI.m_additionalTxt.text = ""; // zero out the text if there wasn't any good default text (only key text afaik)
+            else GUI.m_additionalTxt.text = ""; // zero out the text if there wasn't any good default text
 
             // ------- Lockdown -------
             if (status == eDoorStatus.Closed_LockedWithNoKey)
             {
-                if (hasKeyText || hasBonusText)
+                if (hasBonusText)
                 {
                     GUI.m_additionalTxt.text += "<br><color=#ffcc00>LOCKDOWN</color>";
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
@@ -735,21 +746,22 @@ namespace InformativeDoorIcons
                 isLockdownOrPowerRestricted = true;
             }
 
-            // ------- Generator/Cell Required -------
-            if (doorSL.m_sync.GetCurrentSyncState().status == eDoorStatus.Closed_LockedWithPowerGenerator)
+            // ------- Generator/Power Required -------
+            if (status == eDoorStatus.Closed_LockedWithPowerGenerator && !isLockdownOrPowerRestricted)
             {
                 string requiredGen = doorLocks.m_powerGeneratorNeeded.m_itemKey;
+                bool hasGenText = requiredGen != null && requiredGen != "";
 
-                if (hasKeyText || hasBonusText)
+                if (hasBonusText)
                 {
-                    if (requiredGen != null) GUI.m_additionalTxt.text += $"<br><color=#ffcc00>REQ: {requiredGen}</color>";
-                                        else GUI.m_additionalTxt.text +=  "<br><color=#ffcc00>REQ: POWER CELL</color>";
+                    if (hasGenText) GUI.m_additionalTxt.text += $"<br><color=#ffcc00>REQ: {requiredGen}</color>";
+                               else GUI.m_additionalTxt.text +=  "<br><color=#ffcc00>NO POWER</color>";
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
                 }
                 else
                 {
-                    if (requiredGen != null) GUI.m_additionalTxt.text = $"REQ: {requiredGen}";
-                                        else GUI.m_additionalTxt.text =  "REQ: POWER CELL";
+                    if (hasGenText) GUI.m_additionalTxt.text = $"REQ: {requiredGen}";
+                               else GUI.m_additionalTxt.text =  "NO POWER";
 
                     GUI.m_additionalTxt.color = new Color(1, 0.8f, 0, 1);
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
@@ -759,6 +771,45 @@ namespace InformativeDoorIcons
                 isLockdownOrPowerRestricted = true;
             }
 
+            // ------- Key door -------
+            if (!isLockdownOrPowerRestricted)
+            {
+                if (status == eDoorStatus.Closed_LockedWithBulkheadDC)
+                {
+                    if (hasBonusText)
+                    {
+                        GUI.m_additionalTxt.text += $"<br><color=#ff8706>REQ: {doorLocks.m_bulkheadDCNeeded.PublicName}</color>";
+                        GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                    }
+                    else
+                    {
+                        GUI.m_additionalTxt.text  = $"REQ: {doorLocks.m_bulkheadDCNeeded.PublicName}";
+                        GUI.m_additionalTxt.color = new Color(1, 0.5279f, 0.0221f, 1);
+                        GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                    }
+
+                    hasKeyText = true;
+                    hasBonusText = true;
+                }
+                else if (status == eDoorStatus.Closed_LockedWithKeyItem || GUI.Status == eCM_GuiObjectStatus.DoorSecureKeycard || GUI.m_status == eCM_GuiObjectStatus.DoorSecureKeycard)
+                {
+                    if (hasBonusText)
+                    {
+                        GUI.m_additionalTxt.text += $"<br><color=#ff8706>REQ: {doorSL.m_keyItem.PublicName}</color>";
+                        GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                    }
+                    else
+                    {
+                        GUI.m_additionalTxt.text  = $"REQ: {doorSL.m_keyItem.PublicName}";
+                        GUI.m_additionalTxt.color = new Color(1, 0.5279f, 0.0221f, 1);
+                        GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                    }
+
+                    hasKeyText = true;
+                    hasBonusText = true;
+                }
+            }
+
             // ------- Alarm door -------
             // IE: Class III Spooky Alarm
             if (!isLockdownOrPowerRestricted
@@ -766,11 +817,10 @@ namespace InformativeDoorIcons
             &&  doorLocks.m_hasAlarm
             && !doorLocks.ChainedPuzzleToSolve.IsSolved
             &&  doorLocks.ChainedPuzzleToSolve.Data.PublicAlarmName != null
-            &&  status != eDoorStatus.Open
-            &&  status != eDoorStatus.Opening
+            && !doorIsOpen
             && (GUI.Status != eCM_GuiObjectStatus.DoorSecureOpen || GUI.m_status != eCM_GuiObjectStatus.DoorSecureOpen))
             {
-                if (hasKeyText || hasBonusText)
+                if (hasBonusText)
                 {
                     GUI.m_additionalTxt.text     += $"<br><color=red>{doorLocks.ChainedPuzzleToSolve.Data.PublicAlarmName}</color>";
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
@@ -782,14 +832,15 @@ namespace InformativeDoorIcons
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
                 }
 
+                hasAlarmText = true;
                 hasBonusText = true;
             }
 
             // ------- Blood Door -------
-            if (doorSL.ActiveEnemyWaveData != null && status != eDoorStatus.Open && status != eDoorStatus.Opening)
+            if (doorSL.ActiveEnemyWaveData != null && !doorIsOpen)
             {
                 // Blood Door
-                if (hasKeyText || hasBonusText)
+                if (hasBonusText)
                 {
                     GUI.m_additionalTxt.text += "<br><color=#ff1313>MOTION DETECTED</color>";
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
@@ -802,6 +853,36 @@ namespace InformativeDoorIcons
                 }
 
                 hasBonusText = true;
+            }
+
+            // ------- Bulkhead (alarmed) sprite-set and label adjustmet -------
+            // The goal is to cheat a little to make it use the new IDI bulkhead icons without having to create new objects.
+            // Also to move the generic APEX (now ALARM) text from the usual location, nesting it among our new flavor text
+            if (doorLocks.m_bulkheadDCNeeded != null && doorLocks.m_hasAlarm && !doorIsOpen)
+            {
+                // switch us to use the regular bulkhead door sprite-set
+                if (GUI.m_gfxSecureApex.gameObject.activeSelf)
+                {
+                    GUI.m_gfxBulkheadClosed.gameObject.SetActive(true);
+                    GUI.m_gfxSecureApex.gameObject.SetActive(false);
+                }
+
+                if (!hasAlarmText && !isLockdownOrPowerRestricted && status == eDoorStatus.Closed_LockedWithBulkheadDC)
+                {
+                    if (hasBonusText)
+                    {
+                        GUI.m_additionalTxt.text += "<br><size=30><color=red>ALARM</color></size>";
+                        GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
+                    }
+                    else
+                    {
+                        GUI.m_additionalTxt.text  = "ALARM";
+                        GUI.m_additionalTxt.color = Color.red;
+                        GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                    }
+
+                    hasBonusText = true;
+                }
             }
 
             /*
@@ -845,8 +926,8 @@ namespace InformativeDoorIcons
         {
             public static void Postfix(GS_Lobby __instance)
             {
-                if (DoorManager.s_weakDoor.Count > 0) DoorManager.s_weakDoor.Clear();
-                if (DoorManager.s_securityDoor.Count > 0) DoorManager.s_securityDoor.Clear();
+                if (s_weakDoor.Count > 0) s_weakDoor.Clear();
+                if (s_securityDoor.Count > 0) s_securityDoor.Clear();
             }
         }
         // ============================================================
@@ -955,6 +1036,7 @@ namespace InformativeDoorIcons
                     mat.SetFloat(ShaderUtilities.ID_OutlineWidth, 0.15f); // Thickness (0.0 to 1.0, typically keep it low like 0.1–0.3)
                     mat.SetColor(ShaderUtilities.ID_OutlineColor, new Color(0, 0, 0, .5f));
                     mat.SetFloat(ShaderUtilities.ID_OutlineSoftness, 0);
+                    __instance.m_locatorTxt.fontMaterial.SetFloat("_FaceDilate", __instance.m_locatorTxt.outlineWidth);
 
                     // Register:
                     RegisterSecurityDoor(instanceId, __instance, physicalDoor_SL);
@@ -1025,6 +1107,42 @@ namespace InformativeDoorIcons
             public static void Prefix(CM_SyncedGUIItem __instance, bool visible)
             {
                 if (__instance.m_gfxSecureApex == null || visible == false) return; // null = Not a door GUI.
+
+                if (CfgDoorRotationAdjustment)
+                {
+                    // Rotate the entire door icon so that it's easiest to read the connected text
+                    // Upside-down icons should be flipped to rightside-up, and left/right directional sided doors should have their bottom's centered on the elevator icon.
+                    if (__instance.transform.localPosition != new Vector3(0,0,0) && __instance.transform.rotation.eulerAngles.z != 0)
+                    {
+                        Transform guiTransform = __instance.transform;
+
+                        // generally get the door icon out of a bad rotation
+                        if (guiTransform.localRotation.eulerAngles.z is >= 110 and <= 240)
+                        {
+                            guiTransform.localRotation = Quaternion.EulerAngles(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
+                        }
+
+                        bool isLeftOfElevator  = guiTransform.localPosition.x < 0;
+                        bool isRightOfElevator = guiTransform.localPosition.x > 0;
+
+                        // if the door is "sided", make the localRotation actually reflect the side it's on
+                        // 60 - 290 (top of circle OoB), 110 - 240 (bottom of circle OoB)
+                        if (guiTransform.localRotation.eulerAngles.z is >= 60 and <= 290 && guiTransform.localPosition.x != 0)
+                        {
+                            // Debug.LogWarning($"left: {isLeftOfElevator}, right: {isRightOfElevator}, starting angle:{guiTransform.localRotation.eulerAngles}");
+                            if (isLeftOfElevator && guiTransform.localRotation.eulerAngles.z is >= 250 and <= 280)
+                            {
+                                guiTransform.localRotation = Quaternion.Euler(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
+                            }
+                            else if (isRightOfElevator && guiTransform.localRotation.eulerAngles.z is >= 70 and <= 100)
+                            {
+                                guiTransform.localRotation = Quaternion.Euler(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
+                            }
+                            // Debug.LogWarning($"final angle:{guiTransform.localRotation.eulerAngles}");
+                        }
+                    }
+                }
+
 
                 LG_SecurityDoor physicalDoor_SL = __instance.RevealerBase.gameObject.GetComponentInParents<LG_SecurityDoor>();
 
