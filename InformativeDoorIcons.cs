@@ -17,7 +17,7 @@ using SNetwork;
 
 namespace InformativeDoorIcons
 {
-    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.3.0")]
+    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.3.1")]
     [BepInDependency("dev.gtfomodding.gtfo-api")]
     public class InformativeDoorIconsPlugin : BasePlugin
     {
@@ -735,12 +735,8 @@ namespace InformativeDoorIcons
             {
                 if (GUI.m_locatorTxt == null && GUI.m_additionalTxt == null) return;
 
-                if (GUI.m_locatorTxt.text == doorSL.m_terminalItem?.TerminalItemKey
-                && (GUI.m_additionalTxt.text == $"REQ: {doorSL.m_keyItem?.PublicName}" || GUI.m_additionalTxt.text == "OVERRIDE:" || GUI.m_additionalTxt.text == ""))
-                {
-                    // Debug.LogError($"[IDI] text is already good, Returning...");
+                if (GUI.m_locatorTxt.text == doorSL.m_terminalItem?.TerminalItemKey && (GUI.m_additionalTxt.text == $"REQ: {doorSL.m_keyItem?.PublicName}" || GUI.m_additionalTxt.text == "OVERRIDE:" || GUI.m_additionalTxt.text == ""))
                     return;
-                }
 
                 if (GUI.m_locatorTxt?.text != doorSL.m_terminalItem.TerminalItemKey)
                 {
@@ -997,14 +993,6 @@ namespace InformativeDoorIcons
                 }
             }
 
-            /*
-            Debug.LogWarning($"[IDI] DoorFlavor lockdown/power: {isLockdownOrPowerRestricted}");
-            Debug.LogWarning($"[IDI] DoorFlavor bonus text: {hasBonusText}");
-            Debug.LogWarning($"[IDI] DoorFlavor imported status: {status}");
-            Debug.LogWarning($"[IDI] DoorFlavor last status: {doorSL.LastStatus}");
-            Debug.LogWarning($"[IDI] DoorFlavor text: {GUI.m_additionalTxt.text}");
-            */
-
             GUI.m_additionalTxt.fontSizeMax = 50;
             GUI.m_additionalTxt.gameObject.GetComponent<MeshRenderer>().sortingOrder = 4; // make the text above all other sprites
 
@@ -1049,9 +1037,6 @@ namespace InformativeDoorIcons
 
         internal static void InventoryStyleShift(float generalTextAlpha, float headerTextAlpha, Color backgroundColor, PUI_Inventory mapInventory, Sprite newSprite)
         {
-            // a cheaty method of making sure we're not running this logic unless we're actually changing states
-            if (mapInventory.m_headerRoot.GetComponentInChildren<TextMeshPro>().alpha == headerTextAlpha) return;
-
             // generate custom background sprite
             if (CustomInventoryBackgroundSprite == null)
             {
@@ -1062,7 +1047,7 @@ namespace InformativeDoorIcons
                 CustomInventoryBackgroundSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(1, 0.5f), 1);
                 CustomInventoryBackgroundSprite.name = "Custom";
 
-                if (CustomInventoryBackgroundSprite == null) Debug.LogError("[IDI] CustomInventoryBackgroundSprite is null,");
+                if (CustomInventoryBackgroundSprite == null) Debug.LogError("[IDI] ModdedInventoryGradient.png is null,");
             }
             // generate default background sprite
             if (DefaultInventoryBackgroundSprite == null)
@@ -1074,7 +1059,7 @@ namespace InformativeDoorIcons
                 DefaultInventoryBackgroundSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(1, 0.5f), 1);
                 DefaultInventoryBackgroundSprite.name = "Default";
 
-                if (DefaultInventoryBackgroundSprite == null) Debug.LogError("[IDI] DefaultInventoryBackgroundSprite is null,");
+                if (DefaultInventoryBackgroundSprite == null) Debug.LogError("[IDI] OGInventoryGradient.png is null,");
             }
 
             // foreach text element      -- change text alpha
@@ -1084,7 +1069,7 @@ namespace InformativeDoorIcons
             // general text
             foreach (TextMeshPro text in mapInventory.gameObject.GetComponentsInChildren<TextMeshPro>())
             {
-                if (!text.gameObject.activeSelf) continue;
+                if (!text.gameObject.activeSelf || text.text == "") continue;
 
                 bool wasChanged = false;
 
@@ -1126,8 +1111,13 @@ namespace InformativeDoorIcons
                 }
             }
 
-            // header
-            mapInventory.m_headerRoot.GetComponentInChildren<TextMeshPro>().alpha = headerTextAlpha; // text alpha
+            // Header, text alpha
+            TextMeshPro headerText = mapInventory.m_headerRoot.GetComponentInChildren<TextMeshPro>();
+            if (headerText.alpha != headerTextAlpha && headerText != null)
+            {
+                headerText.alpha = headerTextAlpha;
+                headerText.ForceMeshUpdate();
+            }
 
             SpriteRenderer headerBackground = mapInventory.m_headerRoot.GetComponentInChildren<SpriteRenderer>();
 
@@ -1163,7 +1153,7 @@ namespace InformativeDoorIcons
         //  Reset our door registers every mission.
         // ============================================================
         [HarmonyPatch(typeof(GS_Lobby), nameof(GS_Lobby.TryStartLevelTrigger))]
-        public static class InformativeDoorIcons_GS_Lobby_TryStartLevelTrigger_NameChangeForDebug
+        public static class InformativeDoorIcons_GS_Lobby_TryStartLevelTrigger_PurgeRegisteredDoors
         {
             public static void Postfix(GS_Lobby __instance)
             {
@@ -1175,7 +1165,7 @@ namespace InformativeDoorIcons
         //  Resets a weak door's custom inner-sprite color back to the game defaults once both locks have been unlocked.
         // ============================================================
         [HarmonyPatch(typeof(LG_WeakLock), nameof(LG_WeakLock.OnSyncStatusChanged))]
-        public static class InformativeDoorIcons_LG_WeakLock_OnSyncStatusChanged_DoorLockCheckForUnlocked
+        public static class InformativeDoorIcons_LG_WeakLock_OnSyncStatusChanged_IconColorResetOnUnlock
         {
             public static void Postfix(LG_WeakLock __instance, eWeakLockStatus status)
             {
@@ -1326,7 +1316,7 @@ namespace InformativeDoorIcons
         // Because I'm really lazy right now, I also tied in the icon swap in the same hook.
         // ============================================================
         [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SetVisible))]
-        public static class InformativeDoorIcons_CM_SyncedGUIItem_SetVisible_SecDoorStyle
+        public static class InformativeDoorIcons_CM_SyncedGUIItem_SetVisible_SecDoorStyle_1
         {
             public static void Prefix(CM_SyncedGUIItem __instance, bool visible)
             {
@@ -1386,7 +1376,7 @@ namespace InformativeDoorIcons
         // also catches some instances when LG_SecDoor does not normally sync.
         // ============================================================
         [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SyncSetStatus))]
-        public static class InformativeDoorIcons_CM_SyncedGUIItem_SyncSetStatus_SecDoorStyle
+        public static class InformativeDoorIcons_CM_SyncedGUIItem_SyncSetStatus_SecDoorStyle_2
         {
             public static void Postfix(CM_SyncedGUIItem __instance)
             {
@@ -1407,7 +1397,7 @@ namespace InformativeDoorIcons
         // Our main "door state has changed" hook.
         // ============================================================
         [HarmonyPatch(typeof(LG_SecurityDoor), nameof(LG_SecurityDoor.OnSyncDoorStatusChange))]
-        public static class InformativeDoorIcons_LG_SecurityDoor_OnSyncDoorStatusChange_SecDoorStyle
+        public static class InformativeDoorIcons_LG_SecurityDoor_OnSyncDoorStatusChange_SecDoorStyle_3
         {
             public static void Postfix(LG_SecurityDoor __instance)
             {
@@ -1450,7 +1440,7 @@ namespace InformativeDoorIcons
         }
 
         // ============================================================
-        // Make PlayerIcon sorting order the highest, so that it draws on top of everything
+        // Make PlayerIcon sortingOrder the highest, so that it draws on top of everything
         // ============================================================
         [HarmonyPatch(typeof(CM_MapPlayerGUIItem), nameof(CM_MapPlayerGUIItem.SetVisible))]
         public static class InformativeDoorIcons_CM_MapPlayerGUIItem_SetVisible_PutPlayerIconsOnTop
@@ -1460,8 +1450,8 @@ namespace InformativeDoorIcons
                 if (!visible) return;
                 
                 __instance.m_localPlayerIcon.sortingOrder = 100;
-                __instance.m_syncPlayerIcon.sortingOrder = 100;
-                __instance.m_nickname.sortingOrder = 100;
+                __instance.m_syncPlayerIcon.sortingOrder  = 100;
+                __instance.m_nickname.sortingOrder        = 100;
             }
         }
 
