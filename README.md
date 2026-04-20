@@ -8,15 +8,15 @@
 	</a>
 </p>
 
-<p align="center">There's also some miscellaneous options you can check out in the configs that improve map clarity.</p>
+<p align="center">There's also some miscellaneous options you can check out in the configs that improve information clarity. One can be seen below, and the other removes the useless Legend from the map screen.</p>
 <p align="center">
 	<a href="https://i.ibb.co/F4VprH4Z/image.png">
-		<img src="https://i.ibb.co/F4VprH4Z/image.png" title="Misc features"/>
+		<img src="https://i.ibb.co/F4VprH4Z/image.png" title="Player titles and inventory slots gain a slightly darker background, with both elements having an increased sortingOrder. This should make the important parts of the inventory pop quite a bit more."/>
 	</a>
 </p>
 
 <p align="center">
-	<img src="https://i.ibb.co/ZztJ3FT9/Arrow-Blue-128px.png" alt="Love ya"/>
+	<img src="https://i.ibb.co/ZztJ3FT9/Arrow-Blue-128px.png" title="Love ya"/>
 </p>
 
 <p align="center">Info for Rundown devs: The Extra Door Info option draws the names for Generators, Bulkhead_DCs, Keycards, and Alarm classifications from these sources:</p>
