@@ -13,21 +13,25 @@ using TMPro;
 using GTFO.API.Utilities;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
+using SNetwork;
 
 namespace InformativeDoorIcons
 {
-    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.2.2")]
+    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.3.0")]
     [BepInDependency("dev.gtfomodding.gtfo-api")]
     public class InformativeDoorIconsPlugin : BasePlugin
     {
         public static InformativeDoorIconsPlugin Instance { get; private set; }
 
         // Toggles
+        public static ConfigEntry<bool> MapHighContrastInventory;
+        public static ConfigEntry<bool> RemoveMapLegend;
         public static ConfigEntry<bool> ExtraDoorStateInformation;
         public static ConfigEntry<bool> DoorRotationAdjustment;
        public static ConfigEntry<bool> StyleFreeSecurityDoors;
         public static ConfigEntry<bool> SecurityDoorKeycardMatchColor;
         public static ConfigEntry<bool> ChangeWeakDoorColors;
+        public static ConfigEntry<bool> ExtendToIncludeGlueDoors;
 
         // Colors
         public static ConfigEntry<string> MeleeClosedColorHex;
@@ -38,38 +42,54 @@ namespace InformativeDoorIcons
         public static ConfigEntry<float>  HackClosedAlpha;
         public static ConfigEntry<string> HackOpenColorHex;
         public static ConfigEntry<float>  HackOpenAlpha;
+        public static ConfigEntry<string> GlueColorHex;
+        public static ConfigEntry<float>  GlueAlpha;
+
+        internal float refreshTimer;
 
         public override void Load()
         {
             Instance = this;
 
             // General Toggles
-            ExtraDoorStateInformation     = Config.Bind("Settings", "- Extra door information (Not Retroactive)", true, "For Security Doors, the bottom label is rewritten to display lockdowns, needed power, blood doors, and finally what zone it leads to.");
-            DoorRotationAdjustment        = Config.Bind("Settings", "- Door Rotation Adjustment (Not Retroactive)", true, "Rotates all door icons that are mostly upside-down doors to now be rightside-up. Also rotates left/right rotated doors to use the elevator as their center. This may or may not work well for all cases.");
+            MapHighContrastInventory      = Config.Bind("Misc", "High Contrast inventory in Map", false, "This makes the in-map inventory menu High Contrast, as well as making it appear on top of all other sprites. This might make it easier to see the inventory with all the new text labels.");
+            RemoveMapLegend               = Config.Bind("Misc", "RemoveMapLegend", true, "Has anyone ever even used the thing?");
+
+            DoorRotationAdjustment        = Config.Bind("- Settings", "Door Rotation Adjustment (Not Retroactive)", true, "Rotates all door icons that are mostly upside-down doors to now be rightside-up. Also rotates left/right rotated doors to use the elevator as their center. This may or may not work well for all cases.");
+            ExtraDoorStateInformation     = Config.Bind("- Settings", "Extra door information", true, "For Security Doors, the bottom label is rewritten to display lockdowns, needed power, blood doors, and finally what zone it leads to.");
 
             // Color stuff
-            StyleFreeSecurityDoors        = Config.Bind("Settings", "Change the color for non-alarm Security Doors", true, "Add green coloration to non-alarmed \"free\" Security Door map icons.");
-            SecurityDoorKeycardMatchColor = Config.Bind("Settings", "Security Doors match Keycard color", true, "If a door is locked via Keycard, the interior sprite of the door will now match the Keycard color until unlocked.");
-            ChangeWeakDoorColors          = Config.Bind("Settings", "Change locked Weak Door colors", true, "If a Weak Door (a breackable doors) is locked, their sprite color reflects that.");
+            StyleFreeSecurityDoors        = Config.Bind("- Settings", "- Change the color for non-alarm Security Doors", true, "Add green coloration to non-alarmed \"free\" Security Door map icons.");
+            SecurityDoorKeycardMatchColor = Config.Bind("- Settings", "- Security Doors match Keycard color", true, "If a door is locked via Keycard, the interior sprite of the door will now match the Keycard color until unlocked.");
+            ChangeWeakDoorColors          = Config.Bind("- Settings", "- Change Weak Door colors", true, "If a Weak Door (breackable door) is Locked or Glued, their sprite color reflects that.");
 
-            MeleeClosedColorHex           = Config.Bind("Settings", "MeleeClosedColor", "#FFFF00", "Color of a melee-locked Weak Door icon when closed. #rrggbb");
-            MeleeClosedAlpha              = Config.Bind("Settings", "MeleeClosedAlpha", 0.8f,
+            MeleeClosedColorHex           = Config.Bind("- Settings", "MeleeClosedColor", "#FFFF00", "Color of a Melee-locked Weak Door icon when closed.");
+            MeleeClosedAlpha              = Config.Bind("- Settings", "MeleeClosedAlpha", 0.8f,
                 new ConfigDescription("Opacity of the melee-locked icon (closed state), 0.0-1.0.",
                     new AcceptableValueRange<float>(0f, 1f)));
 
-            MeleeOpenColorHex = Config.Bind("Settings", "MeleeOpenColor", "#FFFF00", "Color of a melee-locked Weak Door icon when open. #rrggbb");
-            MeleeOpenAlpha = Config.Bind("Settings", "MeleeOpenAlpha", 0.1f,
+            MeleeOpenColorHex = Config.Bind("- Settings", "MeleeOpenColor", "#FFFF00", "Color of a Melee-locked Weak Door icon when open.");
+            MeleeOpenAlpha = Config.Bind("- Settings", "MeleeOpenAlpha", 0.1f,
                 new ConfigDescription("Opacity of the melee-locked icon (open state), 0.0-1.0.",
                     new AcceptableValueRange<float>(0f, 1f)));
 
-            HackClosedColorHex = Config.Bind("Settings", "HackClosedColor", "#00FFFF", "Color of a hackable Weak Door icon when closed. #rrggbb");
-            HackClosedAlpha = Config.Bind("Settings", "HackClosedAlpha", 0.6f,
+            HackClosedColorHex = Config.Bind("- Settings", "HackClosedColor", "#00FFFF", "Color of a Hackable Weak Door icon when closed.");
+            HackClosedAlpha = Config.Bind("- Settings", "HackClosedAlpha", 0.6f,
                 new ConfigDescription("Opacity of the hackable icon (closed state), 0.0-1.0.",
                     new AcceptableValueRange<float>(0f, 1f)));
                     
-            HackOpenColorHex = Config.Bind("Settings", "HackOpenColor", "#00FFFF", "Color of a hackable Weak Door icon when open. #rrggbb");
-            HackOpenAlpha = Config.Bind("Settings", "HackOpenAlpha", 0.1f,
+            HackOpenColorHex = Config.Bind("- Settings", "HackOpenColor", "#00FFFF", "Color of a Hackable Weak Door icon when open.");
+            HackOpenAlpha = Config.Bind("- Settings", "HackOpenAlpha", 0.1f,
                 new ConfigDescription("Opacity of the hackable icon (open state), 0.0-1.0.",
+                    new AcceptableValueRange<float>(0f, 1f)));
+
+            // Toggle
+            ExtendToIncludeGlueDoors = Config.Bind("- Settings", "Addon - Color Foamed doors", true, "[Required -> Change Weak Door Colors] Changes the color of a Weak Door icon when it has a non-zero amount of Foam.");
+
+            // Colors
+            GlueColorHex = Config.Bind("- Settings", "FoamDoorColor", "#FFFFFF", "Color of a Door icon when there's a non-zero amount of Foam on it");
+            GlueAlpha = Config.Bind("- Settings", "GlueDoorAlpha", 1f,
+                new ConfigDescription("Opacity of the Glued door icon",
                     new AcceptableValueRange<float>(0f, 1f)));
 
             // ---- Register DoorIconsUpdater with IL2CPP's type system ----
@@ -80,10 +100,8 @@ namespace InformativeDoorIcons
             // ---- Load the custom KEY_BLACK outline sprite ----
             try
             {
-                string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
                 // KEY_BLACK sec door outline
-                byte[] pngOutlineBytes        = File.ReadAllBytes(Path.Combine(pluginDir, "symbol_door_security_map_inner_outline.png"));
-
+                byte[] pngOutlineBytes = File.ReadAllBytes(Path.Combine(DoorManager.pluginDir, "symbol_door_security_map_inner_outline.png"));
                 var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
                 tex.filterMode = FilterMode.Point;
                 tex.LoadImage(pngOutlineBytes);
@@ -91,7 +109,7 @@ namespace InformativeDoorIcons
             }
             catch (Exception e)
             {
-                Debug.LogError($"[InformativeDoorIcons] Failed to load outline sprite: {e.Message}");
+                Debug.LogError($"[IDI] Failed to load outline sprite: {e.Message}");
             }
 
             // ---- Hot-reload watcher ----
@@ -99,13 +117,18 @@ namespace InformativeDoorIcons
             // We only set the dirty flag here, while the actual work happens inside DoorIconsUpdater.Update()
             LiveEditListener cfgListener = LiveEdit.CreateListener(Paths.ConfigPath, Path.GetFileName(Config.ConfigFilePath), false); cfgListener.FileChanged += _ =>
             {
+                Debug.LogWarning($"[IDI] config changed {Time.time}");
+
+                refreshTimer = Time.time + .5f;
                 Config.Reload();
                 DoorManager.MarkConfigDirty();
             };
 
+            // cfgListener.FileChangedEventCooldown = .15f;
+
             DoorManager.RefreshConfig();
 
-            Log.LogInfo("[InformativeDoorIcons] Locked and Loaded.");
+            Log.LogInfo("[IDI] Locked and Loaded.");
         }
     }
 
@@ -124,37 +147,20 @@ namespace InformativeDoorIcons
         public static void EnsureCreated()
         {
             if (_updaterHost != null && _updaterHost.Pointer != IntPtr.Zero) return;
-            _updaterHost = new GameObject("[InformativeDoorIcons] UpdaterHost");
+            _updaterHost = new GameObject("[IDI] UpdaterHost");
             GameObject.DontDestroyOnLoad(_updaterHost);
             _updaterHost.AddComponent(Il2CppType.Of<DoorIconsUpdater>()).Cast<DoorIconsUpdater>();
 
-            Debug.Log("[InformativeDoorIcons] UpdaterHost host created.");
+            Debug.Log("[IDI] UpdaterHost host created.");
         }
 
         void Update()
         {
-            if (DoorManager.ConsumeConfigDirty())
+            if (Time.time >= InformativeDoorIconsPlugin.Instance.refreshTimer && DoorManager.ConsumeConfigDirty())
             {
                 DoorManager.RefreshConfig();
                 DoorManager.ApplyConfigToAllDoors();
             }
-
-            /*
-            if (Input.GetKeyDown(KeyCode.F9))
-            {
-                foreach (DoorManager.WeakDoorEntry item in DoorManager.s_weakDoor.Values)
-                {
-                    Debug.LogWarning($"{item.PhysicalDoor.m_terminalItem.TerminalItemKey}");
-                    foreach (SpriteRenderer sprite in item.GuiItem.GetComponentsInChildren<SpriteRenderer>())
-                    {
-                        Debug.LogWarning($"before: {sprite.gameObject.name}, {sprite.color}");
-                        sprite.color = Color.magenta;
-                        Debug.LogWarning($"after: {sprite.gameObject.name}, {sprite.color}");
-                    }
-                    Debug.LogWarning("--------");
-                }
-            }
-            */
         }
     }
 
@@ -202,7 +208,7 @@ namespace InformativeDoorIcons
             // see this comment on the GTFO modding discord for more details: https://discord.com/channels/782438773690597389/831651015388037171/1493115439704707082
             if (s_weakDoor.ContainsKey(physicalDoorInstanceId))
             {
-                // Debug.LogWarning($"[InformativeDoorIcons] RegisterWeakDoor: duplicate registration for ID {physicalDoorInstanceId}, skipping.");
+                // Debug.LogWarning($"[IDI] RegisterWeakDoor: duplicate registration for ID {physicalDoorInstanceId}, skipping.");
                 return;
             }
 
@@ -222,7 +228,7 @@ namespace InformativeDoorIcons
             // this is here for the same reason as the weak door fix, see the function above for more info
             if (s_securityDoor.ContainsKey(physicalDoorInstanceId))
             {
-                // Debug.LogWarning($"[InformativeDoorIcons] RegisterWeakDoor: duplicate registration for ID {physicalDoorInstanceId}, skipping.");
+                // Debug.LogWarning($"[IDI] RegisterWeakDoor: duplicate registration for ID {physicalDoorInstanceId}, skipping.");
                 return;
             }
 
@@ -277,19 +283,23 @@ namespace InformativeDoorIcons
         }
 
         // ---- Sprite assets ----
+        public static string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
         public static Sprite BlackKeyOutlineSprite { get; set; } = null;
         public static Sprite BulkMainSprite { get; set; } = null;
         public static Sprite BulkSecondarySprite { get; set; } = null;
         public static Sprite BulkOverloadSprite { get; set; } = null;
-        public static Sprite BulkSecondaryOpenSprite { get; set; } = null;
-        public static Sprite BulkOverloadOpenSprite { get; set; } = null;
+        public static Sprite DefaultInventoryBackgroundSprite { get; set; } = null;
+        public static Sprite CustomInventoryBackgroundSprite { get; set; } = null;
 
         // ---- Cached config values ----
         // All reads during Setup and hot-reload go through these fields.
         // Toggles:
+        public static bool CfgMapHighContrastInventory      = false; // not retroactive
+        public static bool CfgRemoveMapLegend               = true;
         public static bool CfgExtraDoorStateInformation     = true; // not retroactive
         public static bool CfgDoorRotationAdjustment        = true; // not retroactive
         public static bool CfgChangeWeakDoorColors          = true;
+        public static bool CfgExtendToIncludeGlueDoors      = true;
         public static bool CfgStyleFreeSecurityDoors        = true;
         public static bool CfgSecurityDoorKeycardMatchColor = true;
 
@@ -298,6 +308,7 @@ namespace InformativeDoorIcons
         public static Color CfgMeleeOpenColor   = new Color(1f, 1f, 0f, 0.3f);
         public static Color CfgHackClosedColor  = new Color(0f, 1f, 1f, 0.6f);  // default: cyan
         public static Color CfgHackOpenColor    = new Color(0f, 1f, 1f, 0.3f);
+        public static Color CfgGlueColor        = new Color(1f, 1f, 1f, 0.6f);  // default: white
 
         // ---- Live-config dirty flag ----
         private static volatile bool _configDirty = false;
@@ -314,6 +325,8 @@ namespace InformativeDoorIcons
         // Contains no Unity API calls, but is always invoked on the main thread in practice (from Load() at startup and from DoorIconsUpdater.Update() at runtime).
         public static void RefreshConfig()
         {
+            CfgMapHighContrastInventory      = InformativeDoorIconsPlugin.MapHighContrastInventory.Value;
+            CfgRemoveMapLegend               = InformativeDoorIconsPlugin.RemoveMapLegend.Value;
             CfgExtraDoorStateInformation     = InformativeDoorIconsPlugin.ExtraDoorStateInformation.Value;
             CfgDoorRotationAdjustment        = InformativeDoorIconsPlugin.DoorRotationAdjustment.Value;
             CfgChangeWeakDoorColors          = InformativeDoorIconsPlugin.ChangeWeakDoorColors.Value;
@@ -325,17 +338,24 @@ namespace InformativeDoorIcons
             CfgHackClosedColor  = ParseColorWithAlpha(InformativeDoorIconsPlugin.HackClosedColorHex.Value,  new Color(0f, 1f, 1f),InformativeDoorIconsPlugin.HackClosedAlpha.Value);
             CfgHackOpenColor    = ParseColorWithAlpha(InformativeDoorIconsPlugin.HackOpenColorHex.Value,    new Color(0f, 1f, 1f),InformativeDoorIconsPlugin.HackOpenAlpha.Value);
 
+            CfgExtendToIncludeGlueDoors = InformativeDoorIconsPlugin.ExtendToIncludeGlueDoors.Value;
+            CfgGlueColor        = ParseColorWithAlpha(InformativeDoorIconsPlugin.GlueColorHex.Value,  new Color(1f, 1f, 1f),InformativeDoorIconsPlugin.GlueAlpha.Value);
+
             // juicy logs
-            Debug.Log($"[InformativeDoorIcons] Config refreshed -> " +
-                      $"apex={CfgExtraDoorStateInformation} "        +
-                      $"apex={CfgDoorRotationAdjustment}    "        +
-                      $"weakColors={CfgChangeWeakDoorColors} "       +
-                      $"freeStyle={CfgStyleFreeSecurityDoors} "      + 
+            Debug.Log($"[IDI] Config refreshed -> "                  +
+                      $"rotation={CfgDoorRotationAdjustment} "       +
+                      $"ExtraInfo={CfgExtraDoorStateInformation} "   +
                       $"keycard={CfgSecurityDoorKeycardMatchColor} " +
+                      $"weakColors={CfgChangeWeakDoorColors} "       +
+                      $"styleFree={CfgStyleFreeSecurityDoors} "      + 
                       $"meleeC={CfgMeleeClosedColor} "               + 
                       $"meleeO={CfgMeleeOpenColor} "                 +
                       $"hackC={CfgHackClosedColor} "                 +
-                      $"hackO={CfgHackOpenColor}");
+                      $"hackO={CfgHackOpenColor} "                   +
+                      $"glueDoors={CfgExtendToIncludeGlueDoors} "    +
+                      $"glueColor={CfgGlueColor} "                   +
+                      $"RemoveLegend={CfgRemoveMapLegend} "          +
+                      $"HCMInventory={CfgMapHighContrastInventory}");
         }
 
         // Parses a #rrggbb hex string and combines it with a separate alpha float.
@@ -344,7 +364,7 @@ namespace InformativeDoorIcons
             if (ColorUtility.TryParseHtmlString(hex, out Color c))
                 return new Color(c.r, c.g, c.b, alpha);
 
-            Debug.LogWarning($"[InformativeDoorIcons] Could not parse color '{hex}' — using fallback.");
+            Debug.LogWarning($"[IDI] Could not parse color '{hex}' — using fallback.");
             return new Color(fallbackRGB.r, fallbackRGB.g, fallbackRGB.b, alpha);
         }
 
@@ -358,6 +378,7 @@ namespace InformativeDoorIcons
 
             foreach (KeyValuePair<int, SecurityDoorEntry> kvp in s_securityDoor)
             {
+                if (!CfgExtraDoorStateInformation) Debug.LogWarning("[IDI] applying Sec Door config");
                 ApplyConfigToSecurityDoor(kvp.Value);
 
                 // If the toggle just came back on and this is a KEY_BLACK door whose outline clones
@@ -371,7 +392,7 @@ namespace InformativeDoorIcons
                 }
             }
 
-            Debug.Log($"[InformativeDoorIcons] Hot-reload applied to {s_weakDoor.Count} weak door(s) and {s_securityDoor.Count} security door(s).");
+            Debug.Log($"[IDI] Hot-reload applied to {s_weakDoor.Count} weak door(s) and {s_securityDoor.Count} security door(s).");
         }
 
         // Applies (or reverts) all config-driven changes for a single Weak Door entry.
@@ -380,29 +401,67 @@ namespace InformativeDoorIcons
         {
             if (doorEntry.GuiItem == null) return;
 
+            CM_SyncedGUIItem doorGUI    = doorEntry.GuiItem;
+            LG_WeakDoor physicalDoor_WL = doorEntry.PhysicalDoor;
+            bool doorIsDead = physicalDoor_WL.m_sync.GetCurrentSyncState().status == eDoorStatus.Destroyed;
+
             // ---- Fix door name position ----
-            doorEntry.GuiItem.m_locatorTxt.gameObject.transform.localPosition = new Vector3(0f, 5.5f, 0f);
+            Transform doorTransform = doorGUI.m_locatorTxt.gameObject.transform;
+            if (doorTransform?.localPosition != new Vector3(0f, 5.5f, 0f)) doorTransform.localPosition = new Vector3(0f, 5.5f, 0f);
 
             // ---- Weak door color ----
-            if (!CfgChangeWeakDoorColors)
+            if (!CfgChangeWeakDoorColors || doorIsDead)
             {
                 // Revert to the game's default inner-sprite colors.
                 // On an initial Setup run with the feature off since the sprites are already at these values.
-                SetWeakDoorInnerColors(doorEntry.GuiItem, WeakDoorDefaultClosed, WeakDoorDefaultOpen);
+                SetWeakDoorInnerColors(doorGUI, WeakDoorDefaultClosed, WeakDoorDefaultOpen);
                 return;
             }
-
-            // Bit dumb, but we need to check this for hot-loading stuff, otherwise toggling on & off will cause previously unlocked doors to appear locked again.
-            LG_WeakDoor physicalDoor_WL = doorEntry.PhysicalDoor.GetComponent<LG_WeakDoor>();
+            //
+            // --------- Colors :)
+            //
             if (physicalDoor_WL != null)
             {
-                if (physicalDoor_WL.WeakLocks[0].Status == eWeakLockStatus.Unlocked && physicalDoor_WL.WeakLocks[1].Status == eWeakLockStatus.Unlocked) return;
-            }
+                LG_WeakDoor_Destruction doorDestruction = physicalDoor_WL.gameObject.GetComponent<LG_WeakDoor_Destruction>();
+                bool shouldColorAndHasGlue = CfgChangeWeakDoorColors && CfgExtendToIncludeGlueDoors && doorDestruction?.GetAttachedGlueVolume() > 0;
+                
+                // Detect if the door is glued
+                if (shouldColorAndHasGlue)
+                {
+                    SetWeakDoorInnerColors(doorGUI, CfgGlueColor, CfgGlueColor);
+                    return;
+                }
 
-            if (doorEntry.IsMeleeLocked)
-                SetWeakDoorInnerColors(doorEntry.GuiItem, CfgMeleeClosedColor, CfgMeleeOpenColor);
-            else if (doorEntry.IsHack)
-                SetWeakDoorInnerColors(doorEntry.GuiItem, CfgHackClosedColor, CfgHackOpenColor);
+                if (physicalDoor_WL.WeakLocks?.Count > 0)
+                {
+                    // We need to check this for hot-loading stuff, otherwise toggling on & off will cause previously unlocked doors to appear locked again.
+                    if (physicalDoor_WL.WeakLocks[0].Status == eWeakLockStatus.Unlocked && physicalDoor_WL.WeakLocks[1].Status == eWeakLockStatus.Unlocked)
+                    {
+                        if (shouldColorAndHasGlue)
+                        {
+                            SetWeakDoorInnerColors(doorGUI, CfgGlueColor, CfgGlueColor);
+                            return;
+                        } 
+                        else
+                        {
+                            SetWeakDoorInnerColors(doorGUI, WeakDoorDefaultClosed, WeakDoorDefaultOpen);
+                            return;
+                        }
+                    }
+
+                    if (doorEntry.IsMeleeLocked)
+                    {
+                        SetWeakDoorInnerColors(doorGUI, CfgMeleeClosedColor, CfgMeleeOpenColor); // if Melee locked
+                        return;
+                    }
+                    else if (doorEntry.IsHack)
+                    {
+                        SetWeakDoorInnerColors(doorGUI, CfgHackClosedColor,  CfgHackOpenColor);  // if Hack locked
+                        return;
+                    }
+                }
+                else SetWeakDoorInnerColors(doorGUI, WeakDoorDefaultClosed, WeakDoorDefaultOpen);
+            }
         }
 
         // Applies (or reverts) all config-driven changes for a single Security Door entry.
@@ -410,6 +469,14 @@ namespace InformativeDoorIcons
         internal static void ApplyConfigToSecurityDoor(in SecurityDoorEntry doorEntry)
         {
             if (doorEntry.GuiItem == null) return;
+
+            if (doorEntry.PhysicalDoor?.m_sync != null)
+            {
+                if (GameStateManager.CurrentStateName >= eGameStateName.StopElevatorRide)
+                {
+                    DoorFlavorText(doorEntry.PhysicalDoor, doorEntry.GuiItem, doorEntry.PhysicalDoor.m_sync.GetCurrentSyncState().status);
+                }
+            }
 
             // ---- Fix door name position ----
             doorEntry.GuiItem.m_locatorTxt.gameObject.transform.localPosition = new Vector3(0f, 5.5f, 0f);
@@ -484,17 +551,16 @@ namespace InformativeDoorIcons
             {
                 try
                 {
-                    string pluginDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
                     byte[] pngBytes  = System.IO.File.ReadAllBytes(System.IO.Path.Combine(pluginDir, "symbol_door_security_map_inner_outline.png"));
                     var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
                     tex.filterMode = FilterMode.Point;
                     tex.LoadImage(pngBytes);
                     BlackKeyOutlineSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 64f);
-                    Debug.LogWarning("[InformativeDoorIcons] BlackKeyOutlineSprite was null; created fallback in CreateBlackKeyOutlineClones.");
+                    Debug.LogWarning("[IDI] BlackKeyOutlineSprite was null; created fallback in CreateBlackKeyOutlineClones.");
                 }
                 catch (Exception e)
                 {
-                    Debug.LogError($"[InformativeDoorIcons] CreateBlackKeyOutlineClones: failed to load outline sprite: {e.Message}");
+                    Debug.LogError($"[IDI] CreateBlackKeyOutlineClones: failed to load outline sprite: {e.Message}");
                     return;
                 }
             }
@@ -524,6 +590,7 @@ namespace InformativeDoorIcons
 
         // ---- Weak door inner-sprite color helper ----
         // Moved all the stuff from the harmony patch to static functions so the .Setup() and hot-reloading path share a single definition.
+        internal static bool IsBackgroundSprite(string name) => name.ContainsIgnoreCase("background");
         internal static bool IsInnerSprite(string name) => !name.Contains("(Clone)") && (name.EndsWith("_inner") || (name.Contains("_inner (") && name.EndsWith(")")));
         internal static bool IsClampSprite(string name) => !name.Contains("(Clone)") && (name.EndsWith("_clamp") || (name.Contains("_clamp (") && name.EndsWith(")")));
         internal static bool IsInnerBulkheadSymbolSprite(string name) => name.ContainsIgnoreCase("symbol_bulkhead");
@@ -532,12 +599,12 @@ namespace InformativeDoorIcons
             foreach (SpriteRenderer sprite in guiItem.m_gfxWeakClosed.GetComponentsInChildren<SpriteRenderer>())
             {
                 if (!IsInnerSprite(sprite.gameObject.name)) continue;
-                sprite.color = closedColor;
+                if (sprite.color != closedColor) sprite.color = closedColor;
             }
             foreach (SpriteRenderer sprite in guiItem.m_gfxWeakOpen.GetComponentsInChildren<SpriteRenderer>())
             {
                 if (!IsInnerSprite(sprite.gameObject.name)) continue;
-                sprite.color = openColor;
+                if (sprite.color != openColor) sprite.color = openColor;
             }
         }
 
@@ -552,7 +619,7 @@ namespace InformativeDoorIcons
             const string prefix = "KEY_";
             if (!keyName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                Debug.LogWarning($"[InformativeDoorIcons] '{keyName}' did not contain a valid prefix.");
+                Debug.LogWarning($"[IDI] '{keyName}' did not contain a valid prefix.");
                 return new Color(0.4191f, 0.1387f, 0.1387f, 1);
             }
 
@@ -570,7 +637,7 @@ namespace InformativeDoorIcons
                 return result;
 
             // Fallback
-            Debug.LogWarning($"[InformativeDoorIcons] Could not resolve color from key name: '{keyName}'");
+            Debug.LogWarning($"[IDI] Could not resolve color from key name: '{keyName}'");
             return new Color(0.4191f, 0.1387f, 0.1387f, 1);
         }
 
@@ -580,14 +647,6 @@ namespace InformativeDoorIcons
         // ============================================================
         internal static void BulkheadDoorIconSwap(LG_SecurityDoor doorSL, CM_SyncedGUIItem GUI)
         {
-            static bool IsInnerBulkheadSymbolSprite(string name) => name.ContainsIgnoreCase("symbol_bulkhead");
-
-
-
-
-
-
-
             // make a list, and apply stuff there, so we don't have to duplicate code several times
             // Applied at the bottom if count > 0
             List<SpriteRenderer> bulkSymbols = new();
@@ -670,16 +729,64 @@ namespace InformativeDoorIcons
         // ---------------------------------------------------------------------------------
         internal static void DoorFlavorText(LG_SecurityDoor doorSL, CM_SyncedGUIItem GUI, eDoorStatus status)
         {
-            // Do nothing if Extra Door Deets = False
-            if (InformativeDoorIconsPlugin.ExtraDoorStateInformation.Value == false) return;
+            LG_SecurityDoor_Locks doorLocks = doorSL.gameObject.GetComponent<LG_SecurityDoor_Locks>();
 
-            GUI.m_additionalTxt.fontSizeMin = 22; // up from 18
+            if (!CfgExtraDoorStateInformation)
+            {
+                if (GUI.m_locatorTxt == null && GUI.m_additionalTxt == null) return;
 
-            // some tags to make things easier
-            bool isLockdownOrPowerRestricted = false;
-            bool hasKeyText    = false;
-            bool hasAlarmText    = false;
-            bool hasBonusText  = false;
+                if (GUI.m_locatorTxt.text == doorSL.m_terminalItem?.TerminalItemKey
+                && (GUI.m_additionalTxt.text == $"REQ: {doorSL.m_keyItem?.PublicName}" || GUI.m_additionalTxt.text == "OVERRIDE:" || GUI.m_additionalTxt.text == ""))
+                {
+                    // Debug.LogError($"[IDI] text is already good, Returning...");
+                    return;
+                }
+
+                if (GUI.m_locatorTxt?.text != doorSL.m_terminalItem.TerminalItemKey)
+                {
+                    GUI.m_locatorTxt.text = doorSL.m_terminalItem.TerminalItemKey;
+                    if (GUI.m_locatorTxt.gameObject.activeSelf) GUI.m_locatorTxt.ForceMeshUpdate();
+                }
+                //
+                //
+                if (GUI.m_additionalTxt == null) return;
+                if (status == eDoorStatus.Closed_LockedWithKeyItem || GUI.Status == eCM_GuiObjectStatus.DoorSecureKeycard || GUI.m_status == eCM_GuiObjectStatus.DoorSecureKeycard)
+                {
+                    if (GUI.m_additionalTxt.text != $"REQ: {doorSL.m_keyItem.PublicName}")
+                    {
+                        GUI.m_additionalTxt.text  = $"REQ: {doorSL.m_keyItem.PublicName}";
+                        if (GUI.m_additionalTxt.color != new Color(1, 0.5279f, 0.0221f, 1) ||  GUI.m_additionalTxt.alignment != TextAlignmentOptions.Center)
+                        {
+                            GUI.m_additionalTxt.color = new Color(1, 0.5279f, 0.0221f, 1);
+                            GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                        }
+                        if (GUI.m_additionalTxt.gameObject.activeSelf) GUI.m_additionalTxt.ForceMeshUpdate();
+                    }
+                }
+                else if (doorLocks != null && doorLocks.m_hasAlarm && !doorLocks.ChainedPuzzleToSolve.IsSolved && (status != eDoorStatus.Open || status != eDoorStatus.Opening))
+                {
+                    if (GUI.m_additionalTxt.text != "OVERRIDE:")
+                    {
+                        GUI.m_additionalTxt.text = "OVERRIDE:";
+                        if (GUI.m_additionalTxt.color != new Color(1, 0.5279f, 0.0221f, 1) ||  GUI.m_additionalTxt.alignment != TextAlignmentOptions.Center)
+                        {
+                            GUI.m_additionalTxt.color = new Color(1, 0.5279f, 0.0221f, 1);
+                            GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
+                        }
+
+                        if (GUI.m_additionalTxt.gameObject.activeSelf) GUI.m_additionalTxt.ForceMeshUpdate();
+                    }
+                }
+                else
+                {
+                    GUI.m_additionalTxt.text = "";
+                    if (GUI.m_additionalTxt.gameObject.activeSelf) GUI.m_additionalTxt.ForceMeshUpdate();
+                }
+
+                return;
+            }
+
+            GUI.m_additionalTxt.fontSizeMin = 30; // up from 18
 
             // Add a small outline around the Security Door's bottom text
             Material mat = GUI.m_additionalTxt.fontMaterial;
@@ -691,7 +798,7 @@ namespace InformativeDoorIcons
 
             // ------------------------------------ Zone Progression (inserted in door title) ------------------------------------
             // IE: "This leads to bla bla long text: ZONE123"
-            if (doorSL.m_terminalNavInfoForward.Count > 0)
+            if (doorSL.m_terminalNavInfoForward.Count > 0 && GUI.m_locatorTxt.text == doorSL.m_terminalItem.TerminalItemKey) // should make this a one-and-done change
             {
                 // Extract the ZoneID out of the messy progression text
                 string fullText = doorSL.m_terminalNavInfoForward[0];
@@ -711,8 +818,13 @@ namespace InformativeDoorIcons
 
             // --------------------------------------- Insert "bonus text" to Bottom Text  ---------------------------------------
 
-            LG_SecurityDoor_Locks doorLocks = doorSL.gameObject.GetComponent<LG_SecurityDoor_Locks>();
-            bool doorIsOpen = status == eDoorStatus.Open || status == eDoorStatus.Opening;
+            // some tags to make things easier
+            bool isLockdownOrPowerRestricted = false;
+            bool hasKeyText   = false;
+            bool hasAlarmText = false;
+            bool hasBonusText = false;
+            bool doorIsOpen   = status == eDoorStatus.Open || status == eDoorStatus.Opening;
+            bool isBulkhead   = doorSL.m_securityDoorType == eSecurityDoorType.Bulkhead;
 
             // CRITICAL: This (or a future) top-level IF() MUST return an absolute non += string.
             // If it doesn't, future checks will cascade with a massive amount of duplciated text.
@@ -732,12 +844,12 @@ namespace InformativeDoorIcons
             {
                 if (hasBonusText)
                 {
-                    GUI.m_additionalTxt.text += "<br><color=#ffcc00>LOCKDOWN</color>";
+                    GUI.m_additionalTxt.text += "<br><size=35><color=#ffcc00>LOCKDOWN</color></size>";
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
                 }
                 else
                 {
-                    GUI.m_additionalTxt.text = "LOCKDOWN";
+                    GUI.m_additionalTxt.text = "<size=40>LOCKDOWN</size>";
                     GUI.m_additionalTxt.color = new Color(1, 0.8f, 0, 1);
                     GUI.m_additionalTxt.alignment = TextAlignmentOptions.Center;
                 }
@@ -858,7 +970,7 @@ namespace InformativeDoorIcons
             // ------- Bulkhead (alarmed) sprite-set and label adjustmet -------
             // The goal is to cheat a little to make it use the new IDI bulkhead icons without having to create new objects.
             // Also to move the generic APEX (now ALARM) text from the usual location, nesting it among our new flavor text
-            if (doorLocks.m_bulkheadDCNeeded != null && doorLocks.m_hasAlarm && !doorIsOpen)
+            if (isBulkhead && doorLocks.m_hasAlarm && !doorLocks.ChainedPuzzleToSolve.IsSolved && !doorIsOpen)
             {
                 // switch us to use the regular bulkhead door sprite-set
                 if (GUI.m_gfxSecureApex.gameObject.activeSelf)
@@ -867,11 +979,11 @@ namespace InformativeDoorIcons
                     GUI.m_gfxSecureApex.gameObject.SetActive(false);
                 }
 
-                if (!hasAlarmText && !isLockdownOrPowerRestricted && status == eDoorStatus.Closed_LockedWithBulkheadDC)
+                if (!hasAlarmText)
                 {
                     if (hasBonusText)
                     {
-                        GUI.m_additionalTxt.text += "<br><size=30><color=red>ALARM</color></size>";
+                        GUI.m_additionalTxt.text += "<br><color=red>ALARM</color>";
                         GUI.m_additionalTxt.alignment = TextAlignmentOptions.Baseline;
                     }
                     else
@@ -886,18 +998,147 @@ namespace InformativeDoorIcons
             }
 
             /*
-            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor lockdown/power: {isLockdownOrPowerRestricted}");
-            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor bonus text: {hasBonusText}");
-            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor imported status: {status}");
-            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor last status: {doorSL.LastStatus}");
-            Debug.LogWarning($"[InformativeDoorIcons] DoorFlavor text: {GUI.m_additionalTxt.text}");
+            Debug.LogWarning($"[IDI] DoorFlavor lockdown/power: {isLockdownOrPowerRestricted}");
+            Debug.LogWarning($"[IDI] DoorFlavor bonus text: {hasBonusText}");
+            Debug.LogWarning($"[IDI] DoorFlavor imported status: {status}");
+            Debug.LogWarning($"[IDI] DoorFlavor last status: {doorSL.LastStatus}");
+            Debug.LogWarning($"[IDI] DoorFlavor text: {GUI.m_additionalTxt.text}");
             */
 
             GUI.m_additionalTxt.fontSizeMax = 50;
             GUI.m_additionalTxt.gameObject.GetComponent<MeshRenderer>().sortingOrder = 4; // make the text above all other sprites
-            GUI.m_additionalTxt.transform.localPosition = new Vector3(-0.4f, -5.1f, 0); // move it away from the door sligtly
+
+            // move it away from the door sligtly
+            if (GUI.m_additionalTxt.alignment == TextAlignmentOptions.Baseline) GUI.m_additionalTxt.transform.localPosition = new(-0.4f, -6.5f, 0);
+            else GUI.m_additionalTxt.transform.localPosition = new(-0.4f, -5.1f, 0); 
+            
             if (!GUI.m_additionalTxt.gameObject.activeSelf) GUI.m_additionalTxt.gameObject.SetActive(true);
             GUI.m_additionalTxt.ForceMeshUpdate(true, true);
+        }
+        internal static void WeakDoorGlueColors(LG_WeakDoor doorWL, CM_SyncedGUIItem doorGUI, float glueAmount, WeakDoorEntry doorEntry)
+        {
+            // If the Glue has been destroyed, revert the icon color to the expected state
+            if (glueAmount <= 0)
+            {
+                // is it Locked?
+                if (doorWL.WeakLocks?.Count > 0)
+                {
+                    if (doorWL.WeakLocks[0].Status != eWeakLockStatus.Unlocked || doorWL.WeakLocks[1].Status != eWeakLockStatus.Unlocked)
+                    {
+                        if (doorEntry.IsMeleeLocked)
+                        {
+                            SetWeakDoorInnerColors(doorGUI, CfgMeleeClosedColor, CfgMeleeOpenColor);
+                            return;
+                        }
+                        else if (doorEntry.IsHack)
+                        {
+                            SetWeakDoorInnerColors(doorGUI, CfgHackClosedColor,  CfgHackOpenColor);
+                            return;
+                        }
+                    }
+                }
+
+                // It's Unlocked
+                SetWeakDoorInnerColors(doorGUI, WeakDoorDefaultClosed, WeakDoorDefaultOpen);
+                return;
+            }
+
+            // It's Glued
+            SetWeakDoorInnerColors(doorGUI, CfgGlueColor, CfgGlueColor);
+        }
+
+        internal static void InventoryStyleShift(float generalTextAlpha, float headerTextAlpha, Color backgroundColor, PUI_Inventory mapInventory, Sprite newSprite)
+        {
+            // a cheaty method of making sure we're not running this logic unless we're actually changing states
+            if (mapInventory.m_headerRoot.GetComponentInChildren<TextMeshPro>().alpha == headerTextAlpha) return;
+
+            // generate custom background sprite
+            if (CustomInventoryBackgroundSprite == null)
+            {
+                byte[] pngOutlineBytes = File.ReadAllBytes(Path.Combine(pluginDir, "ModdedInventoryGradient.png"));
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
+                tex.filterMode = FilterMode.Point;
+                tex.LoadImage(pngOutlineBytes);
+                CustomInventoryBackgroundSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(1, 0.5f), 1);
+                CustomInventoryBackgroundSprite.name = "Custom";
+
+                if (CustomInventoryBackgroundSprite == null) Debug.LogError("[IDI] CustomInventoryBackgroundSprite is null,");
+            }
+            // generate default background sprite
+            if (DefaultInventoryBackgroundSprite == null)
+            {
+                byte[] pngOutlineBytes = File.ReadAllBytes(Path.Combine(pluginDir, "OGInventoryGradient.png"));
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false);
+                tex.filterMode = FilterMode.Point;
+                tex.LoadImage(pngOutlineBytes);
+                DefaultInventoryBackgroundSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(1, 0.5f), 1);
+                DefaultInventoryBackgroundSprite.name = "Default";
+
+                if (DefaultInventoryBackgroundSprite == null) Debug.LogError("[IDI] DefaultInventoryBackgroundSprite is null,");
+            }
+
+            // foreach text element      -- change text alpha
+            // foreach slim-weapon slot  -- change background
+            // direct target header      -- change background
+            // ---------------------
+            // general text
+            foreach (TextMeshPro text in mapInventory.gameObject.GetComponentsInChildren<TextMeshPro>())
+            {
+                if (!text.gameObject.activeSelf) continue;
+
+                bool wasChanged = false;
+
+                if (text.alpha != generalTextAlpha)
+                {
+                    text.alpha = generalTextAlpha;
+                    wasChanged = true;
+                }
+
+                if (CfgMapHighContrastInventory && text.sortingOrder != 51)
+                {
+                    text.sortingOrder = 51;
+                    wasChanged = true;
+                }
+                else if (!CfgMapHighContrastInventory && text.sortingOrder != 0)
+                {
+                    text.sortingOrder = 0;
+                    wasChanged = true;
+                }
+
+                if (wasChanged) text.ForceMeshUpdate();
+            }
+
+            // weapon slots
+            foreach (PUI_InventoryItem item in mapInventory.m_inventorySlots.Values)
+            {
+                if (!item.gameObject.activeSelf) continue;
+
+                foreach (SpriteRenderer background in item.m_slim_root.GetComponentsInChildren<SpriteRenderer>())
+                {
+                    if (!background.gameObject.activeSelf || !IsBackgroundSprite(background.gameObject.name)) continue;
+                    
+                    if       (CfgMapHighContrastInventory && background.sortingOrder != 50) background.sortingOrder = 50;
+                    else if (!CfgMapHighContrastInventory && background.sortingOrder != 0)  background.sortingOrder = 0;
+
+                    if (background.color != backgroundColor) background.color = backgroundColor;
+
+                    if (newSprite != null && background.sprite != newSprite) background.sprite = newSprite;
+                }
+            }
+
+            // header
+            mapInventory.m_headerRoot.GetComponentInChildren<TextMeshPro>().alpha = headerTextAlpha; // text alpha
+
+            SpriteRenderer headerBackground = mapInventory.m_headerRoot.GetComponentInChildren<SpriteRenderer>();
+
+            if (!headerBackground.gameObject.activeSelf || headerBackground == null) return;
+
+            if       (CfgMapHighContrastInventory && headerBackground.sortingOrder != 50) headerBackground.sortingOrder = 50;
+            else if (!CfgMapHighContrastInventory && headerBackground.sortingOrder != 0)  headerBackground.sortingOrder = 0;
+
+            if  (headerBackground.color != backgroundColor) headerBackground.color = backgroundColor;
+
+            if (newSprite != null && headerBackground.sprite != newSprite) headerBackground.sprite = newSprite;
         }
 
     
@@ -938,42 +1179,25 @@ namespace InformativeDoorIcons
         {
             public static void Postfix(LG_WeakLock __instance, eWeakLockStatus status)
             {
-                if (status != eWeakLockStatus.Unlocked) return;
+                if (!CfgChangeWeakDoorColors || status != eWeakLockStatus.Unlocked) return;
 
-                // If we never applied custom colors, there is nothing to reset.
-                if (!CfgChangeWeakDoorColors) return;
-
-                // lmfao
-                // LG_WeakDoor physicalDoor_WL = __instance.gameObject.transform.parent.transform.parent.transform.parent.transform.parent.transform.parent.GetComponent<LG_WeakDoor>();
                 LG_WeakDoor physicalDoor_WL = __instance.gameObject.GetComponentInParents<LG_WeakDoor>();
 
-                if (physicalDoor_WL == null)
-                {
-                    return;
-                }
+                if (physicalDoor_WL == null) return;
 
-                // If either of the locks != Unlocked, don't act. We need both to be Unlocked.
+                // If either of the locks are still Locked, don't act. We need both to be Unlocked.
                 if (physicalDoor_WL.WeakLocks[0].Status != eWeakLockStatus.Unlocked || physicalDoor_WL.WeakLocks[1].Status != eWeakLockStatus.Unlocked) return;
 
                 // Look up the map-marker GUI that was registered during Setup.
-                if (!TryGetWeakDoorGUI(physicalDoor_WL.gameObject.GetInstanceID(), out CM_SyncedGUIItem guiItem))
+                if (!TryGetWeakDoorEntry(physicalDoor_WL.gameObject.GetInstanceID(), out WeakDoorEntry doorEntry))
                 {
-                    Debug.LogWarning("[InformativeDoorIcons] OnSyncStatusChanged: no GUI entry found for unlocked weak door.");
+                    Debug.LogWarning("[IDI] OnSyncStatusChanged: no GUI entry found for unlocked weak door.");
                     return;
                 }
 
-                // closed sprite
-                foreach (SpriteRenderer sprite in guiItem.m_gfxWeakClosed.GetComponentsInChildren<SpriteRenderer>())
-                {
-                    if (!IsInnerSprite(sprite.gameObject.name)) continue;
-                    sprite.color = new(0.3373f, 0.3529f, 0.2549f, 1f);
-                }
-                // open sprite
-                foreach (SpriteRenderer sprite in guiItem.m_gfxWeakOpen.GetComponentsInChildren<SpriteRenderer>())
-                {
-                    if (!IsInnerSprite(sprite.gameObject.name)) continue;
-                    sprite.color = new(0.3373f, 0.3529f, 0.2549f, 0.0549f);
-                }
+                if (CfgChangeWeakDoorColors && CfgExtendToIncludeGlueDoors && physicalDoor_WL.gameObject.GetComponent<LG_WeakDoor_Destruction>().GetAttachedGlueVolume() > 0) // if Glued
+                     SetWeakDoorInnerColors(doorEntry.GuiItem, CfgGlueColor, CfgGlueColor);
+                else SetWeakDoorInnerColors(doorEntry.GuiItem, WeakDoorDefaultClosed, WeakDoorDefaultOpen);
             }
         }
 
@@ -1007,16 +1231,19 @@ namespace InformativeDoorIcons
                 if (physicalDoor_WL != null)
                 {
                     // Make sure it has locks
-                    if (physicalDoor_WL.WeakLocks == null) return;
-                    // Used for late-join protection
-                    if (physicalDoor_WL.WeakLocks[0].Status == eWeakLockStatus.Unlocked && physicalDoor_WL.WeakLocks[1].Status == eWeakLockStatus.Unlocked) return;
+                    if (physicalDoor_WL.WeakLocks == null)
+                    {
+                        RegisterWeakDoor(instanceId, __instance, physicalDoor_WL, false, false);
+                        return;
+                    }
 
                     bool isMeleeLocked = physicalDoor_WL.WeakLocks[0].m_lockType == eWeakLockType.Melee    || physicalDoor_WL.WeakLocks[1].m_lockType == eWeakLockType.Melee;
                     bool isHack        = physicalDoor_WL.WeakLocks[0].m_lockType == eWeakLockType.Hackable || physicalDoor_WL.WeakLocks[1].m_lockType == eWeakLockType.Hackable;
 
-                    // Register:
                     RegisterWeakDoor(instanceId, __instance, physicalDoor_WL, isMeleeLocked, isHack);
-                    // Debug.LogWarning($"[InformativeDoorIcons] WeakDoor registered: {instanceId}");
+
+                    // Used for late-join protection
+                    if (physicalDoor_WL.WeakLocks[0].Status == eWeakLockStatus.Unlocked && physicalDoor_WL.WeakLocks[1].Status == eWeakLockStatus.Unlocked) return;
 
                     // Retrieve the stored entry w/ orig values, then push to color logic. Done to avoid duplicate re-color logic for hot-loading.
                     if (TryGetWeakDoorEntry(instanceId, out WeakDoorEntry wEntry))
@@ -1040,7 +1267,7 @@ namespace InformativeDoorIcons
 
                     // Register:
                     RegisterSecurityDoor(instanceId, __instance, physicalDoor_SL);
-                    // Debug.LogWarning($"[InformativeDoorIcons] SecurityDoor registered: {instanceId}");
+                    // Debug.LogWarning($"[IDI] SecurityDoor registered: {instanceId}");
 
                     // Retrieve the stored entry w/ orig values, then push to color logic. Done to avoid duplicate re-color logic for hot-loading.
                     if (TryGetSecurityDoorEntry(instanceId, out SecurityDoorEntry sEntry))
@@ -1055,8 +1282,6 @@ namespace InformativeDoorIcons
                     }
 
                     // We're prepping the custom sprites here, which SHOULD make them ready to be set when needed on Visible() call
-                    string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-
                     if (physicalDoor_SL.LinksToLayerType == LG_LayerType.MainLayer) // Main
                     {
                         if (BulkMainSprite == null)
@@ -1095,11 +1320,10 @@ namespace InformativeDoorIcons
         }
 
         // ============================================================
+        // (Label Patch #1), but also does IDI bulkhead sprites and some rotation stuff
         // CM_SyncedGUIItem sets its own rotation at some dumb point. I've chosen to target its
         // visibility state for rotation changes, since the best possible chance to have a set rotation.
         // Because I'm really lazy right now, I also tied in the icon swap in the same hook.
-        //
-        // To avoid clutter in this area, I've sent the references off to a dedicated class.
         // ============================================================
         [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SetVisible))]
         public static class InformativeDoorIcons_CM_SyncedGUIItem_SetVisible_SecDoorStyle
@@ -1110,26 +1334,26 @@ namespace InformativeDoorIcons
 
                 if (CfgDoorRotationAdjustment)
                 {
-                    // Rotate the entire door icon so that it's easiest to read the connected text
-                    // Upside-down icons should be flipped to rightside-up, and left/right directional sided doors should have their bottom's centered on the elevator icon.
+                    // Rotate the entire door icon so that it's easier to read the label text
+                    // Upside-down icons should be flipped to rightside-up, and left/right directional doors should have their bottom's centered on the elevator icon.
                     if (__instance.transform.localPosition != new Vector3(0,0,0) && __instance.transform.rotation.eulerAngles.z != 0)
                     {
                         Transform guiTransform = __instance.transform;
 
-                        // generally get the door icon out of a bad rotation
+                        // generally get the door icon out of a bad rotation. This is mostly the bottom ~130 deg
                         if (guiTransform.localRotation.eulerAngles.z is >= 110 and <= 240)
                         {
-                            guiTransform.localRotation = Quaternion.EulerAngles(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
+                            guiTransform.localRotation = Quaternion.Euler(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
                         }
 
                         bool isLeftOfElevator  = guiTransform.localPosition.x < 0;
                         bool isRightOfElevator = guiTransform.localPosition.x > 0;
 
-                        // if the door is "sided", make the localRotation actually reflect the side it's on
+                        // if the door is "sided", make the localRotation actually reflect the side it's on.
+                        // This is important, since our "bad rotation fix" might've side-swapped some doors at extreme angles.
                         // 60 - 290 (top of circle OoB), 110 - 240 (bottom of circle OoB)
                         if (guiTransform.localRotation.eulerAngles.z is >= 60 and <= 290 && guiTransform.localPosition.x != 0)
                         {
-                            // Debug.LogWarning($"left: {isLeftOfElevator}, right: {isRightOfElevator}, starting angle:{guiTransform.localRotation.eulerAngles}");
                             if (isLeftOfElevator && guiTransform.localRotation.eulerAngles.z is >= 250 and <= 280)
                             {
                                 guiTransform.localRotation = Quaternion.Euler(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
@@ -1138,11 +1362,9 @@ namespace InformativeDoorIcons
                             {
                                 guiTransform.localRotation = Quaternion.Euler(0, 0, guiTransform.localRotation.eulerAngles.z + 180);
                             }
-                            // Debug.LogWarning($"final angle:{guiTransform.localRotation.eulerAngles}");
                         }
                     }
                 }
-
 
                 LG_SecurityDoor physicalDoor_SL = __instance.RevealerBase.gameObject.GetComponentInParents<LG_SecurityDoor>();
 
@@ -1153,30 +1375,37 @@ namespace InformativeDoorIcons
 
                     // On visible(), we're forcing the door to update its state.
                     DoorFlavorText(physicalDoor_SL, __instance, physicalDoor_SL.m_sync.GetCurrentSyncState().status); // labeling function
-                    // Debug.LogWarning("[InformativeDoorIcons] CM_SyncedGUIItem.SetVisible ran");
+                    // Debug.LogWarning("[IDI] CM_SyncedGUIItem.SetVisible ran");
                 }
             }
         }
 
-        // This patch is mainly required to avoid auto-hidden labels.
+        // ============================================================
+        // For Extra Door Info door labels. (Label Patch #2)
+        // This patch is mainly required to avoid the default logic that auto-hides door labels, but
+        // also catches some instances when LG_SecDoor does not normally sync.
+        // ============================================================
         [HarmonyPatch(typeof(CM_SyncedGUIItem), nameof(CM_SyncedGUIItem.SyncSetStatus))]
         public static class InformativeDoorIcons_CM_SyncedGUIItem_SyncSetStatus_SecDoorStyle
         {
             public static void Postfix(CM_SyncedGUIItem __instance)
             {
-                if (__instance.m_gfxSecureApex == null) return; // null = Not a door GUI.
+                if (__instance.m_gfxSecureApex == null || !CfgExtraDoorStateInformation) return; // null = Not a door GUI.
 
                 LG_SecurityDoor physicalDoor_SL = __instance.RevealerBase.gameObject.GetComponentInParents<LG_SecurityDoor>();
 
                 if (physicalDoor_SL != null)
                 {
                     DoorFlavorText(physicalDoor_SL, __instance, physicalDoor_SL.m_sync.GetCurrentSyncState().status);
-                    // Debug.LogWarning("[InformativeDoorIcons] CM_SyncedGUIItem.SyncSetStatus ran");
+                    // Debug.LogWarning("[IDI] CM_SyncedGUIItem.SyncSetStatus ran");
                 }
             }
         }
 
-        // Our main "door state has changed" hook for adjusting the Sec Door labels.
+        // ============================================================
+        // For Extra Door Info door labels. (Label Patch #3)
+        // Our main "door state has changed" hook.
+        // ============================================================
         [HarmonyPatch(typeof(LG_SecurityDoor), nameof(LG_SecurityDoor.OnSyncDoorStatusChange))]
         public static class InformativeDoorIcons_LG_SecurityDoor_OnSyncDoorStatusChange_SecDoorStyle
         {
@@ -1184,7 +1413,97 @@ namespace InformativeDoorIcons
             {
                 TryGetSecurityDoorEntry(__instance.gameObject.GetInstanceID(), out SecurityDoorEntry doorEntry);
                 DoorFlavorText(__instance, doorEntry.GuiItem, __instance.LastStatus);
-                // Debug.LogWarning("[InformativeDoorIcons] OnSyncDoorStatusChange ran");
+                // Debug.LogWarning("[IDI] OnSyncDoorStatusChange ran");
+            }
+        }
+
+        // ============================================================
+        // Handles all Glue related logic for Weak Door color shifting.
+        // ============================================================
+        [HarmonyPatch(typeof(LG_WeakDoor_Destruction), nameof(LG_WeakDoor_Destruction.AddGlue))]
+        public static class InformativeDoorIcons_LG_WeakDoor_Destruction_AddGlue_WeakDoorGlueColor
+        {
+            public static void Postfix(LG_WeakDoor_Destruction __instance)
+            {
+                if (!CfgChangeWeakDoorColors || !CfgExtendToIncludeGlueDoors) return;
+                //
+                //
+                int doorInstance = __instance.gameObject.GetInstanceID();
+                
+                TryGetWeakDoorEntry(doorInstance, out WeakDoorEntry doorEntry);
+                
+                if (doorEntry.GuiItem == null || doorEntry.PhysicalDoor == null)
+                {
+                    Debug.LogWarning($"[IDI] AddGlue, GUI or Door was null, glue value: {__instance.GetAttachedGlueVolume()}, doorInstance: {doorInstance}");
+                    foreach (WeakDoorEntry item in s_weakDoor.Values)
+                    {
+                        Debug.LogWarning($"entry: {item.PhysicalDoor.gameObject.GetInstanceID()}");
+                    }
+                    return;
+                }
+
+                // Is the door dead and you're still gluing it somehow?
+                if (doorEntry.PhysicalDoor.m_sync.GetCurrentSyncState().status == eDoorStatus.Destroyed) return;
+
+                WeakDoorGlueColors(__instance.gameObject.GetComponent<LG_WeakDoor>(), doorEntry.GuiItem, __instance.GetAttachedGlueVolume(), doorEntry);
+            }
+        }
+
+        // ============================================================
+        // Make PlayerIcon sorting order the highest, so that it draws on top of everything
+        // ============================================================
+        [HarmonyPatch(typeof(CM_MapPlayerGUIItem), nameof(CM_MapPlayerGUIItem.SetVisible))]
+        public static class InformativeDoorIcons_CM_MapPlayerGUIItem_SetVisible_PutPlayerIconsOnTop
+        {
+            public static void Postfix(CM_MapPlayerGUIItem __instance, bool visible)
+            {
+                if (!visible) return;
+                
+                __instance.m_localPlayerIcon.sortingOrder = 100;
+                __instance.m_syncPlayerIcon.sortingOrder = 100;
+                __instance.m_nickname.sortingOrder = 100;
+            }
+        }
+
+        // ============================================================
+        // Map, Player Inventory - High Contrast
+        // ============================================================
+        [HarmonyPatch(typeof(CM_PageMap), nameof(CM_PageMap.UpdatePlayerInventory))]
+        public static class InformativeDoorIcons_CM_PageMap_UpdatePlayerInventory_HighContrastMapInventory
+        {
+            public static void Postfix(CM_PageMap __instance, SNet_Player player)
+            {
+                // if all of these objects are non-null and MainMenuLayer == false, Return
+                if (__instance.m_inventory?[0]?.m_baseLayer?.GuiLayerBase?.gameObject?.activeSelf == false || GameStateManager.CurrentStateName < eGameStateName.StopElevatorRide) return;
+
+                PUI_Inventory playerMapInventory = __instance.m_inventory[player.PlayerSlotIndex()];
+
+                if (player == null || playerMapInventory == null) return;
+
+                if (CfgMapHighContrastInventory) InventoryStyleShift(1, 1, new Color(.2f, .2f, .2f, 1), playerMapInventory, CustomInventoryBackgroundSprite);
+                else InventoryStyleShift(0.3137f, 0.3922f, new Color(0.5472f, 0.5472f, 0.5472f, 0.1569f), playerMapInventory, DefaultInventoryBackgroundSprite);
+            }
+        }
+
+        // ============================================================
+        // Map, remove Legend
+        // ============================================================
+        [HarmonyPatch(typeof(CM_PageMap), nameof(CM_PageMap.OnEnable))]
+        public static class InformativeDoorIcons_CM_PageMap_OnEnable_LegendBeGone
+        {
+            public static void Postfix(CM_PageMap __instance)
+            {
+                if (__instance.m_mapLegend == null) return;
+
+                if (CfgRemoveMapLegend  && __instance.m_mapLegend.gameObject.activeSelf)
+                {
+                    __instance.m_mapLegend.gameObject.SetActive(false);
+                    return;
+                }
+                else if (!CfgRemoveMapLegend && !__instance.m_mapLegend.gameObject.activeSelf)
+                {
+                    __instance.m_mapLegend.gameObject.SetActive(true);
+                }
             }
         }
     }
