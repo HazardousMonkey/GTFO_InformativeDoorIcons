@@ -17,7 +17,7 @@ using SNetwork;
 
 namespace InformativeDoorIcons
 {
-    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.3.1")]
+    [BepInPlugin("informativedooricons.HazardousMonkey", "InformativeDoorIcons", "1.3.2")]
     [BepInDependency("dev.gtfomodding.gtfo-api")]
     public class InformativeDoorIconsPlugin : BasePlugin
     {
@@ -1035,7 +1035,7 @@ namespace InformativeDoorIcons
             SetWeakDoorInnerColors(doorGUI, CfgGlueColor, CfgGlueColor);
         }
 
-        internal static void InventoryStyleShift(float generalTextAlpha, float headerTextAlpha, Color backgroundColor, PUI_Inventory mapInventory, Sprite newSprite)
+        internal static void InventoryStyleShift(float generalTextAlpha, float headerTextAlpha, Color headerBackgroundColor, Color slotBackgroundColor, PUI_Inventory mapInventory, Sprite newSprite)
         {
             // generate custom background sprite
             if (CustomInventoryBackgroundSprite == null)
@@ -1105,7 +1105,9 @@ namespace InformativeDoorIcons
                     if       (CfgMapHighContrastInventory && background.sortingOrder != 50) background.sortingOrder = 50;
                     else if (!CfgMapHighContrastInventory && background.sortingOrder != 0)  background.sortingOrder = 0;
 
-                    if (background.color != backgroundColor) background.color = backgroundColor;
+                    if (background.color != headerBackgroundColor) background.color = slotBackgroundColor;
+
+                    if (background.gameObject.name.ContainsIgnoreCase("Background Small")) continue;
 
                     if (newSprite != null && background.sprite != newSprite) background.sprite = newSprite;
                 }
@@ -1126,7 +1128,7 @@ namespace InformativeDoorIcons
             if       (CfgMapHighContrastInventory && headerBackground.sortingOrder != 50) headerBackground.sortingOrder = 50;
             else if (!CfgMapHighContrastInventory && headerBackground.sortingOrder != 0)  headerBackground.sortingOrder = 0;
 
-            if  (headerBackground.color != backgroundColor) headerBackground.color = backgroundColor;
+            if  (headerBackground.color != headerBackgroundColor) headerBackground.color = headerBackgroundColor;
 
             if (newSprite != null && headerBackground.sprite != newSprite) headerBackground.sprite = newSprite;
         }
@@ -1470,8 +1472,8 @@ namespace InformativeDoorIcons
 
                 if (player == null || playerMapInventory == null) return;
 
-                if (CfgMapHighContrastInventory) InventoryStyleShift(1, 1, new Color(.2f, .2f, .2f, 1), playerMapInventory, CustomInventoryBackgroundSprite);
-                else InventoryStyleShift(0.3137f, 0.3922f, new Color(0.5472f, 0.5472f, 0.5472f, 0.1569f), playerMapInventory, DefaultInventoryBackgroundSprite);
+                if (CfgMapHighContrastInventory) InventoryStyleShift(1, 1, new Color(.2f, .2f, .2f, 1), new Color(.2f, .2f, .2f, 1), playerMapInventory, CustomInventoryBackgroundSprite);
+                else InventoryStyleShift(0.3137f, 0.3922f, new Color(0.5472f, 0.5472f, 0.5472f, 0.1569f), new Color(0.4353f, 0.4353f, 0.4353f, 0.1176f), playerMapInventory, DefaultInventoryBackgroundSprite);
             }
         }
 
